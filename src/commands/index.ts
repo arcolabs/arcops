@@ -96,4 +96,8 @@ export const COMMANDS: CommandDef[] = [
   positional: ['site', 'thread-id'],
   flags: ['--body', '--body-file'],
   handler: (a) => inbox.draft({ site: a.site, 'thread-id': a['thread-id'], body: a.body, 'body-file': a['body-file'], token: a.token, api: a.api, output: a.output }) },
+{ path: ['inbox', 'reply'], summary: 'Send a reply (requires send scope, preview + confirm)',
+  positional: ['site', 'thread-id'],
+  flags: ['--body', '--body-file', '--yes'],
+  handler: (a) => inbox.reply({ site: a.site, 'thread-id': a['thread-id'], body: a.body, 'body-file': a['body-file'], yes: a.yes, token: a.token, api: a.api, output: a.output }) },
 ];

@@ -3,6 +3,7 @@ import { apiGet, apiPost } from '../api';
 import { detectOutputFormat, printJson, printTable, error, success } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 import { openEditor } from '../lib/editor';
+import { confirmByTyping } from '../lib/confirm';
 import { readFileSync } from 'node:fs';
 
 export async function ls(args: {
@@ -83,4 +84,50 @@ export async function draft(args: {
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(result);
   success(`Draft #${result.draft.id} saved. Review + send in the web UI.`);
+}
+
+export async function reply(args: {
+  site?: string; 'thread-id'?: string;
+  body?: string; 'body-file'?: string; yes?: string;
+  token?: string; api?: string; output?: string;
+}) {
+  const auth = resolveAuth(args);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
+  const threadId = Number(args['thread-id']);
+  if (!Number.isFinite(threadId)) { error('thread-id required'); process.exit(2); }
+
+  const { thread } = await apiGet<{
+    thread: { subject: string; participant_emails: string[] };
+    messages: { fromEmail: string; subject: string }[];
+  }>(`/api/sites/${site.id}/inbox/threads/${threadId}`, auth);
+
+  let body: string | undefined = args.body;
+  if (!body && args['body-file']) {
+    const file = args['body-file'];
+    body = file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
+  }
+  if (!body) {
+    body = openEditor('', `Reply to thread #${threadId} (${thread.subject}) on ${site.domain}.`);
+  }
+
+  const recipients = thread.participant_emails.join(', ');
+  const subject = thread.subject || 'Re: (no subject)';
+  process.stderr.write(`\n─ Reply preview ─────────────────────────────────────\n`);
+  process.stderr.write(`Site:     ${site.domain}\n`);
+  process.stderr.write(`To:       ${recipients}\n`);
+  process.stderr.write(`Subject:  ${subject}\n`);
+  process.stderr.write(`Body:     [${body.length} chars]\n`);
+  process.stderr.write(body.split('\n').map(l => '          ' + l).join('\n') + '\n');
+  process.stderr.write(`─────────────────────────────────────────────────────\n`);
+
+  if (args.yes !== 'true') {
+    const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm send: `);
+    if (!ok) { error('Send aborted.'); process.exit(1); }
+  }
+
+  await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
+    api: auth.api, token: auth.token,
+    body: { body },
+  });
+  success(`Reply sent to ${recipients}.`);
 }
