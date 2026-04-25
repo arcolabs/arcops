@@ -6,6 +6,7 @@
 import * as auth from './auth';
 import * as campaign from './campaign';
 import * as funnel from './funnel';
+import * as gsc from './gsc';
 import * as overview from './overview';
 import * as revenue from './revenue';
 import * as site from './site';
@@ -64,4 +65,13 @@ export const COMMANDS: CommandDef[] = [
   positional: ['site', 'id'],
   flags: ['--output'],
   handler: (a) => funnel.show({ site: a.site, id: a.id, token: a.token, api: a.api, output: a.output }) },
+{ path: ['gsc', 'query'], summary: 'GSC top queries',
+  positional: ['site'], flags: ['--days', '--limit', '--output'],
+  handler: (a) => gsc.query({ site: a.site, days: a.days, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
+{ path: ['gsc', 'page'], summary: 'GSC top pages',
+  positional: ['site'], flags: ['--days', '--limit', '--output'],
+  handler: (a) => gsc.page({ site: a.site, days: a.days, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
+{ path: ['gsc', 'country'], summary: 'GSC top countries',
+  positional: ['site'], flags: ['--days', '--limit', '--output'],
+  handler: (a) => gsc.country({ site: a.site, days: a.days, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
 ];
