@@ -92,4 +92,8 @@ export const COMMANDS: CommandDef[] = [
 { path: ['inbox', 'archive'], summary: 'Archive (close) an inbox thread',
   positional: ['site', 'thread-id'],
   handler: (a) => inbox.archive({ site: a.site, 'thread-id': a['thread-id'], token: a.token, api: a.api, output: a.output }) },
+{ path: ['inbox', 'draft'], summary: 'Save a draft reply (review in web UI)',
+  positional: ['site', 'thread-id'],
+  flags: ['--body', '--body-file'],
+  handler: (a) => inbox.draft({ site: a.site, 'thread-id': a['thread-id'], body: a.body, 'body-file': a['body-file'], token: a.token, api: a.api, output: a.output }) },
 ];
