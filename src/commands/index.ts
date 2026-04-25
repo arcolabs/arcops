@@ -4,6 +4,7 @@
 // to this array. Dispatch reads `path` and routes; never switch on name.
 
 import * as auth from './auth';
+import * as campaign from './campaign';
 import * as overview from './overview';
 import * as revenue from './revenue';
 import * as site from './site';
@@ -46,4 +47,12 @@ export const COMMANDS: CommandDef[] = [
   positional: ['site'],
   flags: ['--output', '--days', '--group-by'],
   handler: (a) => traffic.traffic({ site: a.site, days: a.days, group_by: a.group_by, token: a.token, api: a.api, output: a.output }) },
+{ path: ['campaign', 'ls'], summary: 'List campaigns for a site',
+  positional: ['site'],
+  flags: ['--output'],
+  handler: (a) => campaign.ls({ site: a.site, token: a.token, api: a.api, output: a.output }) },
+{ path: ['campaign', 'show'], summary: 'Show a campaign',
+  positional: ['site', 'id'],
+  flags: ['--output'],
+  handler: (a) => campaign.show({ site: a.site, id: a.id, token: a.token, api: a.api, output: a.output }) },
 ];
