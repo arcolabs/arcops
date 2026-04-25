@@ -5,8 +5,10 @@
 
 import * as auth from './auth';
 import * as campaign from './campaign';
+import * as customer from './customer';
 import * as funnel from './funnel';
 import * as gsc from './gsc';
+import * as inbox from './inbox';
 import * as overview from './overview';
 import * as revenue from './revenue';
 import * as site from './site';
@@ -74,4 +76,13 @@ export const COMMANDS: CommandDef[] = [
 { path: ['gsc', 'country'], summary: 'GSC top countries',
   positional: ['site'], flags: ['--days', '--limit', '--output'],
   handler: (a) => gsc.country({ site: a.site, days: a.days, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
+{ path: ['customer', 'ls'], summary: 'List customers',
+  positional: ['site'], flags: ['--output'],
+  handler: (a) => customer.ls({ site: a.site, 'min-ltv': a['min-ltv'], token: a.token, api: a.api, output: a.output }) },
+{ path: ['inbox', 'ls'], summary: 'List inbox threads',
+  positional: ['site'], flags: ['--unread', '--status', '--output'],
+  handler: (a) => inbox.ls({ site: a.site, unread: a.unread, status: a.status, token: a.token, api: a.api, output: a.output }) },
+{ path: ['inbox', 'show'], summary: 'Show thread + messages',
+  positional: ['site', 'thread-id'], flags: ['--output'],
+  handler: (a) => inbox.show({ site: a.site, 'thread-id': a['thread-id'], token: a.token, api: a.api, output: a.output }) },
 ];
