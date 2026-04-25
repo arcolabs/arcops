@@ -4,6 +4,7 @@
 // to this array. Dispatch reads `path` and routes; never switch on name.
 
 import * as auth from './auth';
+import * as overview from './overview';
 import * as site from './site';
 
 export type CommandHandler = (args: Record<string, string>) => Promise<void> | void;
@@ -28,4 +29,11 @@ export const COMMANDS: CommandDef[] = [
   { path: ['site', 'ls'], summary: 'List all sites',
     flags: ['--output'],
     handler: (a) => site.ls(a) },
+{ path: ['overview'], summary: 'Show overview analytics',
+  flags: ['--output', '--days'],
+  handler: (a) => overview.overview({ token: a.token, api: a.api, output: a.output, days: a.days }) },
+{ path: ['site', 'show'], summary: 'Show a single site',
+  positional: ['site'],
+  flags: ['--output'],
+  handler: (a) => site.show(a) },
 ];
