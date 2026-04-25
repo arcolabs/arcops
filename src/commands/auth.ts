@@ -1,0 +1,50 @@
+// src/commands/auth.ts
+import { saveCredentials, clearCredentials, loadCredentials, resolveAuth } from '../config';
+import { apiGet } from '../api';
+import { info, success, error, printJson, detectOutputFormat } from '../output';
+
+export async function login(args: { token?: string; api?: string }) {
+  if (!args.token) {
+    error('--token <ts_…> required (browser OAuth flow not implemented in v1)');
+    process.exit(2);
+  }
+  const api = args.api ?? process.env.TS_API ?? 'https://tritonix.cn';
+  // Sanity-check the token by hitting /api/sites
+  try {
+    await apiGet('/api/sites', { api, token: args.token });
+  } catch (e) {
+    error(`Token check failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+  saveCredentials({ token: args.token, api });
+  success(`Logged in to ${api}`);
+}
+
+export async function status(args: { token?: string; api?: string; output?: string }) {
+  const auth = resolveAuth(args);
+  const fmt = detectOutputFormat(args.output);
+  if (!auth.token) {
+    if (fmt === 'json') printJson({ authenticated: false, api: auth.api });
+    else error('Not logged in. Run: ts auth login --token ts_…');
+    process.exit(auth.token ? 0 : 1);
+  }
+  try {
+    const sites = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
+    if (fmt === 'json') {
+      printJson({ authenticated: true, api: auth.api, site_count: sites.sites.length });
+    } else {
+      success(`Authenticated to ${auth.api}`);
+      info(`${sites.sites.length} sites visible`);
+    }
+  } catch (e) {
+    error(`Token rejected: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
+export async function logout() {
+  const before = loadCredentials();
+  clearCredentials();
+  if (before.token) success('Logged out.');
+  else info('Already logged out.');
+}
