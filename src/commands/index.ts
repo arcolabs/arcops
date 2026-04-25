@@ -4,6 +4,7 @@
 // to this array. Dispatch reads `path` and routes; never switch on name.
 
 import * as auth from './auth';
+import * as site from './site';
 
 export type CommandHandler = (args: Record<string, string>) => Promise<void> | void;
 
@@ -24,4 +25,7 @@ export const COMMANDS: CommandDef[] = [
     handler: (a) => auth.status({ token: a.token, api: a.api, output: a.output }) },
   { path: ['auth', 'logout'], summary: 'Clear stored credentials',
     handler: () => auth.logout() },
+  { path: ['site', 'ls'], summary: 'List all sites',
+    flags: ['--output'],
+    handler: (a) => site.ls(a) },
 ];
