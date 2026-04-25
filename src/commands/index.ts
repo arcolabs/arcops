@@ -5,6 +5,7 @@
 
 import * as auth from './auth';
 import * as campaign from './campaign';
+import * as funnel from './funnel';
 import * as overview from './overview';
 import * as revenue from './revenue';
 import * as site from './site';
@@ -55,4 +56,12 @@ export const COMMANDS: CommandDef[] = [
   positional: ['site', 'id'],
   flags: ['--output'],
   handler: (a) => campaign.show({ site: a.site, id: a.id, token: a.token, api: a.api, output: a.output }) },
+{ path: ['funnel', 'ls'], summary: 'List funnels for a site',
+  positional: ['site'],
+  flags: ['--output'],
+  handler: (a) => funnel.ls({ site: a.site, token: a.token, api: a.api, output: a.output }) },
+{ path: ['funnel', 'show'], summary: 'Show a funnel',
+  positional: ['site', 'id'],
+  flags: ['--output'],
+  handler: (a) => funnel.show({ site: a.site, id: a.id, token: a.token, api: a.api, output: a.output }) },
 ];
