@@ -89,4 +89,7 @@ export const COMMANDS: CommandDef[] = [
 { path: ['inbox', 'show'], summary: 'Show thread + messages',
   positional: ['site', 'thread-id'], flags: ['--output'],
   handler: (a) => inbox.show({ site: a.site, 'thread-id': a['thread-id'], token: a.token, api: a.api, output: a.output }) },
+{ path: ['inbox', 'archive'], summary: 'Archive (close) an inbox thread',
+  positional: ['site', 'thread-id'],
+  handler: (a) => inbox.archive({ site: a.site, 'thread-id': a['thread-id'], token: a.token, api: a.api, output: a.output }) },
 ];
