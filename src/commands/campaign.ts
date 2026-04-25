@@ -1,21 +1,13 @@
 import { resolveAuth } from '../config';
 import { apiGet } from '../api';
 import { detectOutputFormat, printJson, printTable, error } from '../output';
+import { resolveSiteOrExit } from '../lib/site-resolve';
 
 export async function ls(args: {
   site?: string; token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
-  if (!args.site) {
-    error('site argument required (numeric id or domain)');
-    process.exit(2);
-  }
-  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
-  const site = sites.find(s => s.domain === args.site || String(s.id) === args.site);
-  if (!site) {
-    error(`No site "${args.site}" found`);
-    process.exit(1);
-  }
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   const data = await apiGet<{ campaigns: Record<string, unknown>[] }>(
     `/api/sites/${site.id}/campaigns`,
     { api: auth.api, token: auth.token },
@@ -29,16 +21,7 @@ export async function show(args: {
   site?: string; id?: string; token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
-  if (!args.site) {
-    error('site argument required (numeric id or domain)');
-    process.exit(2);
-  }
-  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
-  const site = sites.find(s => s.domain === args.site || String(s.id) === args.site);
-  if (!site) {
-    error(`No site "${args.site}" found`);
-    process.exit(1);
-  }
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   if (!args.id) { error('--id required'); process.exit(2); }
   const campaignId = Number(args.id);
   if (!Number.isFinite(campaignId)) { error('invalid campaign id'); process.exit(2); }

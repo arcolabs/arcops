@@ -1,6 +1,7 @@
 import { resolveAuth } from '../config';
 import { apiGet } from '../api';
 import { detectOutputFormat, printJson, printTable, error } from '../output';
+import { resolveSiteOrExit } from '../lib/site-resolve';
 
 const COLS = {
   query:   ['query', 'clicks', 'impressions', 'ctr', 'position'] as const,
@@ -8,17 +9,9 @@ const COLS = {
   country: ['country', 'clicks', 'impressions'] as const,
 };
 
-async function resolveSite(siteArg: string, auth: { api: string; token: string }) {
-  if (!siteArg) { error('site argument required (numeric id or domain)'); process.exit(2); }
-  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
-  const site = sites.find(s => s.domain === siteArg || String(s.id) === siteArg);
-  if (!site) { error(`No site "${siteArg}" found`); process.exit(1); }
-  return site;
-}
-
 export async function query(args: { site?: string; days?: string; limit?: string; token?: string; api?: string; output?: string }) {
   const auth = resolveAuth(args);
-  const site = await resolveSite(args.site ?? '', auth);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   const query: Record<string, string | number | undefined> = { dim: 'query' };
   if (args.days)  query.days  = Number(args.days);
   if (args.limit) query.limit = Number(args.limit);
@@ -30,7 +23,7 @@ export async function query(args: { site?: string; days?: string; limit?: string
 
 export async function page(args: { site?: string; days?: string; limit?: string; token?: string; api?: string; output?: string }) {
   const auth = resolveAuth(args);
-  const site = await resolveSite(args.site ?? '', auth);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   const query: Record<string, string | number | undefined> = { dim: 'page' };
   if (args.days)  query.days  = Number(args.days);
   if (args.limit) query.limit = Number(args.limit);
@@ -42,7 +35,7 @@ export async function page(args: { site?: string; days?: string; limit?: string;
 
 export async function country(args: { site?: string; days?: string; limit?: string; token?: string; api?: string; output?: string }) {
   const auth = resolveAuth(args);
-  const site = await resolveSite(args.site ?? '', auth);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   const query: Record<string, string | number | undefined> = { dim: 'country' };
   if (args.days)  query.days  = Number(args.days);
   if (args.limit) query.limit = Number(args.limit);

@@ -1,16 +1,14 @@
 import { resolveAuth } from '../config';
 import { apiGet } from '../api';
 import { detectOutputFormat, printJson, printTable, error } from '../output';
+import { resolveSiteOrExit } from '../lib/site-resolve';
 
 export async function ls(args: {
   site?: string; unread?: string; status?: string;
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
-  if (!args.site) { error('site argument required'); process.exit(2); }
-  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
-  const site = sites.find(s => s.domain === args.site || String(s.id) === args.site);
-  if (!site) { error(`No site "${args.site}"`); process.exit(1); }
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   const query: Record<string, string | number | undefined> = {};
   if (args.unread) query.unread = args.unread;
   if (args.status) query.status = args.status;
@@ -28,10 +26,7 @@ export async function show(args: {
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
-  if (!args.site) { error('site argument required'); process.exit(2); }
-  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
-  const site = sites.find(s => s.domain === args.site || String(s.id) === args.site);
-  if (!site) { error(`No site "${args.site}"`); process.exit(1); }
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
   if (!args['thread-id']) { error('thread-id required'); process.exit(2); }
   const threadId = Number(args['thread-id']);
   if (!Number.isFinite(threadId)) { error('invalid thread id'); process.exit(2); }
