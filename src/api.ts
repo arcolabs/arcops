@@ -56,8 +56,8 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     if (loc.includes('cloudflareaccess.com')) {
       throw new ApiError(res.status,
         `Cloudflare Access blocked the request to ${url.pathname}. ` +
-        `Add a CF Access bypass policy for /api/* with header rule "Authorization starts with Bearer ts_". ` +
-        `(See traffic-source CF Zero Trust dashboard.)`,
+        `In CF Zero Trust dashboard, add an Application for ${url.host}/api/* with a Bypass + Everyone policy. ` +
+        `withAuthOrToken validates Bearer tokens server-side; CF Access cookie (browser) is verified via JWKS in cf-access.ts.`,
       );
     }
     throw new ApiError(res.status, `Unexpected redirect to ${loc || '(no location)'}`);
