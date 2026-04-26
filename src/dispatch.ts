@@ -9,6 +9,14 @@ import { VERSION } from './version';
 
 type ParsedArgv = { tokens: string[]; flags: Record<string, string> };
 
+// CLI flag convention is kebab (--group-by, --body-file). Expose the value
+// under both the original kebab key and a snake alias so handlers can read
+// either form — server query params are snake (group_by, body_file).
+function setFlag(flags: Record<string, string>, key: string, value: string) {
+  flags[key] = value;
+  if (key.includes('-')) flags[key.replace(/-/g, '_')] = value;
+}
+
 export function parseArgv(argv: string[]): ParsedArgv {
   const tokens: string[] = [];
   const flags: Record<string, string> = {};
@@ -17,11 +25,11 @@ export function parseArgv(argv: string[]): ParsedArgv {
     if (a.startsWith('--')) {
       const eq = a.indexOf('=');
       if (eq >= 0) {
-        flags[a.slice(2, eq)] = a.slice(eq + 1);
+        setFlag(flags, a.slice(2, eq), a.slice(eq + 1));
       } else {
         const next = argv[i + 1];
-        if (!next || next.startsWith('--')) flags[a.slice(2)] = 'true';
-        else { flags[a.slice(2)] = next; i++; }
+        if (!next || next.startsWith('--')) setFlag(flags, a.slice(2), 'true');
+        else { setFlag(flags, a.slice(2), next); i++; }
       }
     } else {
       tokens.push(a);
