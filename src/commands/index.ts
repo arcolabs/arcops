@@ -3,6 +3,7 @@
 // Catalog-as-data: each command is a row. Adding a new command = appending
 // to this array. Dispatch reads `path` and routes; never switch on name.
 
+import * as attribution from './attribution';
 import * as auth from './auth';
 import * as campaign from './campaign';
 import * as customer from './customer';
@@ -83,6 +84,9 @@ export const COMMANDS: CommandDef[] = [
 { path: ['customer', 'ls'], summary: 'List customers',
   positional: ['site'], flags: ['--output'],
   handler: (a) => customer.ls({ site: a.site, 'min-ltv': a['min-ltv'], token: a.token, api: a.api, output: a.output }) },
+{ path: ['attribution', 'backfill'], summary: 'Retroactive first-touch UTM for unattributed customers',
+  positional: ['site'], flags: ['--output'],
+  handler: (a) => attribution.backfill({ site: a.site, token: a.token, api: a.api, output: a.output }) },
 { path: ['inbox', 'ls'], summary: 'List inbox threads',
   positional: ['site'], flags: ['--unread', '--status', '--output'],
   handler: (a) => inbox.ls({ site: a.site, unread: a.unread, status: a.status, token: a.token, api: a.api, output: a.output }) },
