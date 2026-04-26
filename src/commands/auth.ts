@@ -13,7 +13,7 @@ export async function login(args: { token?: string; api?: string }) {
   try {
     await apiGet('/api/sites', { api, token: args.token });
   } catch (e) {
-    error(`Token check failed: ${(e as Error).message}`);
+    error((e as Error).message);
     process.exit(1);
   }
   saveCredentials({ token: args.token, api });
@@ -37,7 +37,7 @@ export async function status(args: { token?: string; api?: string; output?: stri
       info(`${sites.sites.length} sites visible`);
     }
   } catch (e) {
-    error(`Token rejected: ${(e as Error).message}`);
+    error((e as Error).message);
     process.exit(1);
   }
 }

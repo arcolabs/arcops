@@ -38,6 +38,7 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
+      redirect: 'manual',
     });
   } catch (e) {
     const msg = (e as Error).name === 'TimeoutError'
@@ -46,19 +47,51 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     throw new ApiError(0, msg);
   }
 
-  const text = await res.text();
-  let parsed: unknown = undefined;
-  if (text) {
-    try { parsed = JSON.parse(text); } catch { parsed = text; }
+  // Detect Cloudflare Access intercept (3xx redirect to *.cloudflareaccess.com).
+  // CF Access wraps the origin and redirects unauthorized browsers to its OAuth page;
+  // the API token never reaches Next.js. Fix: add a CF Access bypass policy on the
+  // application for `/api/*` when `Authorization` header matches `^Bearer ts_`.
+  if (res.status >= 300 && res.status < 400) {
+    const loc = res.headers.get('location') ?? '';
+    if (loc.includes('cloudflareaccess.com')) {
+      throw new ApiError(res.status,
+        `Cloudflare Access blocked the request to ${url.pathname}. ` +
+        `Add a CF Access bypass policy for /api/* with header rule "Authorization starts with Bearer ts_". ` +
+        `(See traffic-source CF Zero Trust dashboard.)`,
+      );
+    }
+    throw new ApiError(res.status, `Unexpected redirect to ${loc || '(no location)'}`);
   }
 
+  const text = await res.text();
+  const ctype = res.headers.get('content-type') ?? '';
+
   if (!res.ok) {
-    const errMsg = (parsed && typeof parsed === 'object' && 'error' in parsed)
-      ? String((parsed as { error: unknown }).error)
-      : `HTTP ${res.status}`;
-    throw new ApiError(res.status, errMsg, parsed);
+    let errMsg = `HTTP ${res.status}`;
+    if (ctype.includes('application/json') && text) {
+      try {
+        const j = JSON.parse(text);
+        if (j && typeof j === 'object' && 'error' in j) errMsg = String(j.error);
+        throw new ApiError(res.status, errMsg, j);
+      } catch (e) {
+        if (e instanceof ApiError) throw e;
+      }
+    }
+    throw new ApiError(res.status, errMsg);
   }
-  return parsed as T;
+
+  if (!text) return undefined as T;
+  if (!ctype.includes('application/json')) {
+    throw new ApiError(res.status,
+      `Expected JSON from ${url.pathname} but got ${ctype || 'no content-type'} ` +
+      `(${text.length} bytes). Check --api url.`,
+    );
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    throw new ApiError(res.status, `Invalid JSON from ${url.pathname}: ${(e as Error).message}`);
+  }
 }
 
 export const apiGet    = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'GET' });
