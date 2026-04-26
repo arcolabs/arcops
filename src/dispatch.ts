@@ -1,6 +1,7 @@
 // src/dispatch.ts
+import pc from 'picocolors';
 import { COMMANDS, type CommandDef } from './commands';
-import { error, info } from './output';
+import { error, info, colorOn, paint } from './output';
 import { VERSION } from './version';
 
 // Trie router. Walk argv tokens, longest-prefix match against COMMANDS[].path.
@@ -92,12 +93,43 @@ export async function dispatch(argv: string[]): Promise<number> {
   }
 }
 
+// "TS" ASCII logo — 6 rows, green gradient (dark → bright).
+const TS_ART: string[] = [
+  '████████╗███████╗',
+  '╚══██╔══╝██╔════╝',
+  '   ██║   ███████╗',
+  '   ██║   ╚════██║',
+  '   ██║   ███████║',
+  '   ╚═╝   ╚══════╝',
+];
+const GREEN_GRAD: [number, number, number][] = [
+  [ 13,  90,  40],
+  [ 20, 140,  65],
+  [ 34, 180,  90],
+  [ 57, 210, 110],
+  [ 82, 230, 130],
+  [100, 240, 150],
+];
+
 function printRoot() {
-  process.stderr.write(`ts — traffic-source CLI v${VERSION}\n\n`);
-  process.stderr.write(`Usage: ts <command> [args] [--flags]\n\nCommands:\n`);
-  // Render from catalog (single source of truth).
-  for (const c of COMMANDS) {
-    process.stderr.write(`  ${c.path.join(' ').padEnd(28)} ${c.summary}\n`);
+  process.stderr.write('\n');
+  for (let i = 0; i < TS_ART.length; i++) {
+    if (colorOn) {
+      const [r, g, b] = GREEN_GRAD[i]!;
+      process.stderr.write(`\x1b[38;2;${r};${g};${b}m${TS_ART[i]}\x1b[0m\n`);
+    } else {
+      process.stderr.write(TS_ART[i] + '\n');
+    }
   }
-  process.stderr.write(`\nGlobal flags: --token, --api, --output text|json, --help, --version\n`);
+
+  const line = paint(pc.dim, '─'.repeat(50));
+  process.stderr.write(`\nts — traffic-source CLI ${paint(pc.dim, `v${VERSION}`)}\n`);
+  process.stderr.write(`${line}\n`);
+  process.stderr.write(`${paint(pc.dim, 'Usage:')} ts <command> [args] [--flags]\n\n`);
+  // Render from catalog (single source of truth).
+  process.stderr.write(`${paint(pc.dim, 'Commands:')}\n`);
+  for (const c of COMMANDS) {
+    process.stderr.write(`  ${c.path.join(' ').padEnd(28)} ${paint(pc.dim, c.summary)}\n`);
+  }
+  process.stderr.write(`\nGlobal flags: ${paint(pc.dim, '--token, --api, --output text|json, --help, --version')}\n`);
 }

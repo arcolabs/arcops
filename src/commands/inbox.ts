@@ -1,6 +1,6 @@
 import { resolveAuth } from '../config';
 import { apiGet, apiPost } from '../api';
-import { detectOutputFormat, printJson, printTable, error, success } from '../output';
+import { detectOutputFormat, printJson, printTable, error, success, withSpinner, runSuccess } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 import { openEditor } from '../lib/editor';
 import { confirmByTyping } from '../lib/confirm';
@@ -125,9 +125,12 @@ export async function reply(args: {
     if (!ok) { error('Send aborted.'); process.exit(1); }
   }
 
-  await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
-    api: auth.api, token: auth.token,
-    body: { body },
+  const start = Date.now();
+  await withSpinner(`Sending reply to ${recipients}…`, async () => {
+    await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
+      api: auth.api, token: auth.token,
+      body: { body },
+    });
   });
-  success(`Reply sent to ${recipients}.`);
+  runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
 }
