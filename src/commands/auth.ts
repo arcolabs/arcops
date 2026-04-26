@@ -8,7 +8,7 @@ export async function login(args: { token?: string; api?: string }) {
     error('--token <ts_…> required (browser OAuth flow not implemented in v1)');
     process.exit(2);
   }
-  const api = args.api ?? process.env.TS_API ?? 'https://tritonix.cn';
+  const api = args.api ?? process.env.QUAY_API ?? 'https://tritonix.cn';
   // Sanity-check the token by hitting /api/sites
   try {
     await apiGet('/api/sites', { api, token: args.token });
@@ -25,7 +25,7 @@ export async function status(args: { token?: string; api?: string; output?: stri
   const fmt = detectOutputFormat(args.output);
   if (!auth.token) {
     if (fmt === 'json') printJson({ authenticated: false, api: auth.api });
-    else error('Not logged in. Run: ts auth login --token ts_…');
+    else error('Not logged in. Run: quay auth login --token ts_…');
     process.exit(auth.token ? 0 : 1);
   }
   try {

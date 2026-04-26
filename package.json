@@ -1,13 +1,13 @@
 {
-  "name": "@traffic-source/cli",
+  "name": "@tritonix/quay",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "ts": "dist/ts.mjs"
+    "quay": "dist/quay.mjs"
   },
   "files": [
-    "dist/ts.mjs"
+    "dist/quay.mjs"
   ],
   "engines": {
     "node": ">=20"

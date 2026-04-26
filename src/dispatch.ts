@@ -5,7 +5,7 @@ import { error, info, colorOn, paint } from './output';
 import { VERSION } from './version';
 
 // Trie router. Walk argv tokens, longest-prefix match against COMMANDS[].path.
-// Intermediate nodes (e.g. `ts auth` with no verb) print sub-command list.
+// Intermediate nodes (e.g. `quay auth` with no verb) print sub-command list.
 
 type ParsedArgv = { tokens: string[]; flags: Record<string, string> };
 
@@ -63,15 +63,15 @@ export async function dispatch(argv: string[]): Promise<number> {
 
   const { cmd, depth } = findCommand(parsed.tokens);
   if (!cmd) {
-    // Maybe an intermediate node like `ts auth`
+    // Maybe an intermediate node like `quay auth`
     const children = listChildren(parsed.tokens);
     if (children.length > 0) {
-      info(`Subcommands of \`ts ${parsed.tokens.join(' ')}\`:`);
+      info(`Subcommands of \`quay ${parsed.tokens.join(' ')}\`:`);
       for (const c of children) info(`  ${c.path.slice(parsed.tokens.length).join(' ').padEnd(20)} ${c.summary}`);
       return 0;
     }
     error(`Unknown command: ${parsed.tokens.join(' ')}`);
-    info('Run `ts --help` for the full command list.');
+    info('Run `quay --help` for the full command list.');
     return 2;
   }
 
@@ -93,39 +93,39 @@ export async function dispatch(argv: string[]): Promise<number> {
   }
 }
 
-// "TS" ASCII logo — 6 rows, green gradient (dark → bright).
-const TS_ART: string[] = [
-  '████████╗███████╗',
-  '╚══██╔══╝██╔════╝',
-  '   ██║   ███████╗',
-  '   ██║   ╚════██║',
-  '   ██║   ███████║',
-  '   ╚═╝   ╚══════╝',
+// "QUAY" ASCII logo — 6 rows, blue/teal gradient (deep harbor → sky).
+const QUAY_ART: string[] = [
+  ' ██████╗ ██╗   ██╗ █████╗ ██╗   ██╗',
+  '██╔═══██╗██║   ██║██╔══██╗╚██╗ ██╔╝',
+  '██║   ██║██║   ██║███████║ ╚████╔╝ ',
+  '██║▄▄ ██║██║   ██║██╔══██║  ╚██╔╝  ',
+  '╚██████╔╝╚██████╔╝██║  ██║   ██║   ',
+  ' ╚══▀▀═╝  ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ',
 ];
-const GREEN_GRAD: [number, number, number][] = [
-  [ 13,  90,  40],
-  [ 20, 140,  65],
-  [ 34, 180,  90],
-  [ 57, 210, 110],
-  [ 82, 230, 130],
-  [100, 240, 150],
+const BLUE_GRAD: [number, number, number][] = [
+  [ 30,  60, 110],
+  [ 35,  95, 150],
+  [ 50, 130, 185],
+  [ 75, 165, 210],
+  [110, 195, 225],
+  [150, 220, 240],
 ];
 
 function printRoot() {
   process.stderr.write('\n');
-  for (let i = 0; i < TS_ART.length; i++) {
+  for (let i = 0; i < QUAY_ART.length; i++) {
     if (colorOn) {
-      const [r, g, b] = GREEN_GRAD[i]!;
-      process.stderr.write(`\x1b[38;2;${r};${g};${b}m${TS_ART[i]}\x1b[0m\n`);
+      const [r, g, b] = BLUE_GRAD[i]!;
+      process.stderr.write(`\x1b[38;2;${r};${g};${b}m${QUAY_ART[i]}\x1b[0m\n`);
     } else {
-      process.stderr.write(TS_ART[i] + '\n');
+      process.stderr.write(QUAY_ART[i] + '\n');
     }
   }
 
   const line = paint(pc.dim, '─'.repeat(50));
-  process.stderr.write(`\nts — traffic-source CLI ${paint(pc.dim, `v${VERSION}`)}\n`);
+  process.stderr.write(`\nquay — indie SaaS ops cockpit ${paint(pc.dim, `v${VERSION}`)}\n`);
   process.stderr.write(`${line}\n`);
-  process.stderr.write(`${paint(pc.dim, 'Usage:')} ts <command> [args] [--flags]\n\n`);
+  process.stderr.write(`${paint(pc.dim, 'Usage:')} quay <command> [args] [--flags]\n\n`);
   // Render from catalog (single source of truth).
   process.stderr.write(`${paint(pc.dim, 'Commands:')}\n`);
   for (const c of COMMANDS) {

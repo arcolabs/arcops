@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { warn } from './output';
 
-const ROOT = resolve(homedir(), '.ts');
+const ROOT = resolve(homedir(), '.quay');
 const CRED_PATH = resolve(ROOT, 'credentials.json');
 const CFG_PATH = resolve(ROOT, 'config.json');
 
@@ -50,10 +50,10 @@ export function saveConfig(c: Config) {
 }
 
 // Resolve effective auth: explicit --token / --api flags override file.
-// Env: TS_API overrides API; never accept TS_TOKEN from env (force explicit).
+// Env: QUAY_API overrides API; never accept QUAY_TOKEN from env (force explicit).
 export function resolveAuth(flags: { token?: string; api?: string }): Credentials {
   const file = loadCredentials();
-  const api = flags.api ?? process.env.TS_API ?? file.api ?? 'https://tritonix.cn';
+  const api = flags.api ?? process.env.QUAY_API ?? file.api ?? 'https://tritonix.cn';
   const token = flags.token ?? file.token ?? '';
   return { api, token };
 }

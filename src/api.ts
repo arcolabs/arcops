@@ -1,4 +1,4 @@
-const DEFAULT_TIMEOUT_MS = Number(process.env.TS_TIMEOUT_MS ?? 30_000);
+const DEFAULT_TIMEOUT_MS = Number(process.env.QUAY_TIMEOUT_MS ?? 30_000);
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {
@@ -26,7 +26,7 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const headers: Record<string, string> = {
     'accept': 'application/json',
-    'user-agent': `ts-cli/${process.env.CLI_VERSION ?? 'dev'}`,
+    'user-agent': `quay/${process.env.CLI_VERSION ?? 'dev'}`,
   };
   if (opts.token) headers['authorization'] = `Bearer ${opts.token}`;
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
@@ -42,7 +42,7 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     });
   } catch (e) {
     const msg = (e as Error).name === 'TimeoutError'
-      ? `Request to ${url.host} timed out after ${timeoutMs}ms (override with TS_TIMEOUT_MS).`
+      ? `Request to ${url.host} timed out after ${timeoutMs}ms (override with QUAY_TIMEOUT_MS).`
       : `Request to ${url.host} failed: ${(e as Error).message}`;
     throw new ApiError(0, msg);
   }

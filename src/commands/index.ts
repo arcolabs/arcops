@@ -25,7 +25,7 @@ export type CommandDef = {
 };
 
 export const COMMANDS: CommandDef[] = [
-  { path: ['auth', 'login'],  summary: 'Save API token to ~/.ts/credentials.json',
+  { path: ['auth', 'login'],  summary: 'Save API token to ~/.quay/credentials.json',
     flags: ['--token', '--api'],
     handler: (a) => auth.login({ token: a.token, api: a.api }) },
   { path: ['auth', 'status'], summary: 'Show current auth state',
