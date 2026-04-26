@@ -68,16 +68,26 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
 
   if (!res.ok) {
     let errMsg = `HTTP ${res.status}`;
+    let body: unknown;
+    let detail = '';
     if (ctype.includes('application/json') && text) {
       try {
-        const j = JSON.parse(text);
-        if (j && typeof j === 'object' && 'error' in j) errMsg = String(j.error);
-        throw new ApiError(res.status, errMsg, j);
-      } catch (e) {
-        if (e instanceof ApiError) throw e;
+        body = JSON.parse(text);
+        const j = body as Record<string, unknown>;
+        if (typeof j.error === 'string') detail = j.error;
+        else if (typeof j.message === 'string') detail = j.message;
+        else detail = text.slice(0, 200);
+      } catch {
+        detail = text.slice(0, 200);
       }
+    } else if (text) {
+      // Non-JSON error body (often Next.js HTML 500 page). Strip whitespace/tags-ish noise so the snippet is readable.
+      detail = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
     }
-    throw new ApiError(res.status, errMsg);
+    if (detail) errMsg += `: ${detail}`;
+    const reqId = res.headers.get('x-request-id') ?? res.headers.get('cf-ray');
+    if (reqId) errMsg += ` (request-id: ${reqId})`;
+    throw new ApiError(res.status, errMsg, body);
   }
 
   if (!text) return undefined as T;

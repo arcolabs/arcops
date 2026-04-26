@@ -40,6 +40,30 @@ export function printTable(rows: Record<string, unknown>[], columns: string[]): 
   }
 }
 
+// Two-column key:value block. Keys padded to align values.
+export function printKV(rows: [string, string][]): void {
+  if (rows.length === 0) return;
+  const w = Math.max(...rows.map(([k]) => k.length));
+  for (const [k, v] of rows) {
+    process.stdout.write(`${k.padEnd(w)}  ${v}\n`);
+  }
+}
+
+// Server returns cents as number or numeric string (Postgres BIGINT serializes as string).
+export function formatUsdCents(cents: number | string | null | undefined): string {
+  if (cents == null || cents === '') return '';
+  const n = typeof cents === 'string' ? Number(cents) : cents;
+  if (!Number.isFinite(n)) return String(cents);
+  return `$${(n / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function formatPct(rate: number | string | null | undefined, digits = 1): string {
+  if (rate == null || rate === '') return '';
+  const n = typeof rate === 'string' ? Number(rate) : rate;
+  if (!Number.isFinite(n)) return String(rate);
+  return `${(n * 100).toFixed(digits)}%`;
+}
+
 // ── Spinner ──────────────────────────────────────────────────────────────────
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
