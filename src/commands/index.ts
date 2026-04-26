@@ -7,10 +7,12 @@ import * as attribution from './attribution';
 import * as auth from './auth';
 import * as campaign from './campaign';
 import * as customer from './customer';
+import * as directory from './directory';
 import * as funnel from './funnel';
 import * as gsc from './gsc';
 import * as inbox from './inbox';
 import * as overview from './overview';
+import * as profile from './profile';
 import * as revenue from './revenue';
 import * as site from './site';
 import * as traffic from './traffic';
@@ -44,6 +46,17 @@ export const COMMANDS: CommandDef[] = [
   positional: ['site'],
   flags: ['--output'],
   handler: (a) => site.show(a) },
+{ path: ['site', 'profile'], summary: 'Show the site marketing profile',
+  positional: ['site'],
+  flags: ['--output'],
+  handler: (a) => profile.show({ site: a.site, token: a.token, api: a.api, output: a.output }) },
+{ path: ['site', 'submissions'], summary: 'Show directory submission status (with tracked UTM URLs)',
+  positional: ['site'],
+  flags: ['--output'],
+  handler: (a) => directory.submissions({ site: a.site, token: a.token, api: a.api, output: a.output }) },
+{ path: ['directory', 'ls'], summary: 'List the global directory catalog',
+  flags: ['--output'],
+  handler: (a) => directory.ls({ token: a.token, api: a.api, output: a.output }) },
 { path: ['revenue'], summary: 'Show revenue analytics',
   positional: ['site'],
   flags: ['--output', '--days', '--group-by'],
