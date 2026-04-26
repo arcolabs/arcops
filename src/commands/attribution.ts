@@ -1,5 +1,5 @@
 import { resolveAuth } from '../config';
-import { apiPost } from '../api';
+import { apiGet, apiPost } from '../api';
 import { detectOutputFormat, info, printJson, success } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 
@@ -9,6 +9,47 @@ type BackfillResult = {
   attributed: number;
   skipped_no_session: number;
 };
+
+type DiagResult = {
+  customers_total: number;
+  customers_with_first_visitor: number;
+  customers_with_first_utm: number;
+  visitor_emails_total: number;
+  visitor_emails_unique_emails: number;
+  matchable_unattributed: number;
+};
+
+function pct(num: number, denom: number): string {
+  if (!denom) return '—';
+  return `${Math.round((100 * num) / denom)}%`;
+}
+
+export async function diag(args: {
+  site?: string;
+  token?: string; api?: string; output?: string;
+}) {
+  const auth = resolveAuth(args);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
+  const data = await apiGet<DiagResult>(
+    `/api/sites/${site.id}/attribution-diag`,
+    { api: auth.api, token: auth.token },
+  );
+  const fmt = detectOutputFormat(args.output);
+  if (fmt === 'json') return printJson(data);
+
+  const total = data.customers_total;
+  const unattr = total - data.customers_with_first_visitor;
+  info(`Attribution diagnostics for ${site.domain}:`);
+  info(`  customers total:           ${total}`);
+  info(`  with first_visitor_id:     ${data.customers_with_first_visitor} (${pct(data.customers_with_first_visitor, total)})`);
+  info(`  with first_utm_source:     ${data.customers_with_first_utm} (${pct(data.customers_with_first_utm, total)})`);
+  info(`  unattributed:              ${unattr}`);
+  info('');
+  info(`  visitor_emails rows:       ${data.visitor_emails_total}`);
+  info(`  unique identified emails:  ${data.visitor_emails_unique_emails}`);
+  info('');
+  info(`  matchable via backfill:    ${data.matchable_unattributed}  (\`quay attribution backfill --all\` will attribute exactly this many)`);
+}
 
 // Cloudflare caps origin response at 100s, so each call processes a small batch.
 // `--all` keeps invoking until the backlog drains (scanned < limit).
