@@ -1,8 +1,8 @@
 # quay-cli — Project Notes
 
-`quay` — indie SaaS ops cockpit. Terminal CLI for the [traffic-source](../traffic-source) backend (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox). Single binary, ~50KB, used by Kai + 2 technical teammates.
+`quay` — indie SaaS ops cockpit. Terminal CLI for the [Quay backend](../quay) (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox). Single binary, ~50KB, used by Kai + 2 technical teammates.
 
-**Naming history**: previously `traffic-source-cli` with binary `ts`. Renamed to Quay (Tritonix is the company; Quay is the product) — backend repo path stays `traffic-source/` for now (Zeabur/CF Access rename is a separate, costly project).
+**Naming history**: previously `traffic-source-cli` with binary `ts`, backend at `traffic-source/`. Renamed to Quay (Tritonix is the company; Quay is the product). Zeabur project / CF Access app names may still reference the old slug — that's a separate, costly rename and stays deferred.
 
 Global engineering discipline: `~/.claude/CLAUDE.md`. CLI-specific patterns: `~/.claude/knowledge/frameworks/cli-development.md` (read this before editing — output layering, catalog-as-data, fetch timeouts, lockfile gotchas, ANSI palette discipline).
 
@@ -22,7 +22,7 @@ bun link             # symlinks dist/quay.mjs to ~/.bun/bin/quay for local use
 ```
 
 ## Two-repo workflow
-- Server repo: `~/projects/saas/traffic-source/` (Next.js, Zeabur). Endpoints, auth middleware, schema, mint-token script. Path keeps the old name — server-side rename is deferred.
+- Server repo: `~/projects/saas/quay/` (Next.js, Zeabur). Endpoints, auth middleware, schema, mint-token script.
 - CLI repo: this one (`~/projects/saas/quay-cli/`). Distribution is `bun link` — not on npm.
 - Cross-repo work: split commits via `git -C <path>`. Server change must `git push` to trigger Zeabur deploy before the CLI can use it.
 - New endpoint or scope change in server → after deploy: re-test affected `quay` command end-to-end against `https://tritonix.cn`.
