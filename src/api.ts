@@ -29,14 +29,26 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     'user-agent': `quay/${process.env.CLI_VERSION ?? 'dev'}`,
   };
   if (opts.token) headers['authorization'] = `Bearer ${opts.token}`;
-  if (opts.body !== undefined) headers['content-type'] = 'application/json';
+
+  // Body shaping: FormData → let fetch set its own multipart boundary;
+  // anything else with a value → JSON. Undefined body = no body, no header.
+  const isMultipart = typeof FormData !== 'undefined' && opts.body instanceof FormData;
+  let body: string | FormData | undefined;
+  if (opts.body !== undefined) {
+    if (isMultipart) {
+      body = opts.body as FormData;
+    } else {
+      body = JSON.stringify(opts.body);
+      headers['content-type'] = 'application/json';
+    }
+  }
 
   let res: Response;
   try {
     res = await fetch(url, {
       method: opts.method ?? 'GET',
       headers,
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      body,
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'manual',
     });
@@ -107,3 +119,10 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
 export const apiGet    = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'GET' });
 export const apiPost   = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'POST' });
 export const apiDelete = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'DELETE' });
+
+// 204 No Content / 200 with empty body still come back as undefined from
+// apiCall — but typed as `unknown`, callers had to assert. This shim fixes
+// that for callers that just need success/failure, not the response body.
+export async function apiVoid(path: string, o: Opts): Promise<void> {
+  await apiCall(path, o);
+}
