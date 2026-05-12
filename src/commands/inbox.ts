@@ -328,6 +328,100 @@ export async function reply(args: {
   runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
 }
 
+// ─── Outbound new thread (cold send / customer-initiated chat fallback) ──
+
+// Parse `--to a@x.com,b@y.com` into a trimmed, deduped, lowercased list.
+// Comma-separated keeps the flag count down vs `--to a --to b` and matches
+// how operators paste recipients from other tools.
+function parseEmailList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(',')) {
+    const e = part.trim().toLowerCase();
+    if (!e) continue;
+    if (seen.has(e)) continue;
+    seen.add(e);
+    out.push(e);
+  }
+  return out;
+}
+
+export async function send(args: {
+  site?: string;
+  to?: string; cc?: string;
+  subject?: string;
+  from?: string;
+  body?: string; 'body-file'?: string; template?: string;
+  yes?: string;
+  token?: string; api?: string; output?: string;
+}) {
+  const auth = resolveAuth(args);
+  const site = await resolveSiteOrExit(args.site ?? '', auth);
+
+  const toList = parseEmailList(args.to);
+  if (toList.length === 0) { error('--to <email>[,email...] is required'); process.exit(2); }
+  const ccList = parseEmailList(args.cc);
+  for (const e of [...toList, ...ccList]) {
+    if (!e.includes('@')) { error(`Invalid email: ${e}`); process.exit(2); }
+  }
+
+  const subject = (args.subject ?? '').trim();
+  if (!subject) { error('--subject <text> is required'); process.exit(2); }
+
+  const fromLocal = (args.from ?? 'support').trim();
+
+  const { body, source } = await resolveBody(args, {
+    editorSeed: `New email to ${toList.join(', ')} on ${site.domain}\nSubject: ${subject}`,
+    templateVars: {
+      site_domain: site.domain,
+      customer_email: toList[0],
+    },
+  });
+  if (!body || !body.trim()) { error('Body is empty.'); process.exit(2); }
+
+  process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
+  process.stderr.write(`Site:     ${site.domain}\n`);
+  process.stderr.write(`From:     ${fromLocal}@${site.domain}\n`);
+  process.stderr.write(`To:       ${toList.join(', ')}\n`);
+  if (ccList.length > 0) process.stderr.write(`Cc:       ${ccList.join(', ')}\n`);
+  process.stderr.write(`Subject:  ${subject}\n`);
+  process.stderr.write(`Source:   ${source}\n`);
+  process.stderr.write(`Body:     [${body.length} chars]\n`);
+  process.stderr.write(body.split('\n').map((l) => '          ' + l).join('\n') + '\n');
+  process.stderr.write(`─────────────────────────────────────────────────────\n`);
+
+  if (args.yes !== 'true') {
+    const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm send: `);
+    if (!ok) { error('Send aborted.'); process.exit(1); }
+  }
+
+  const start = Date.now();
+  const result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
+    return apiPost<{ threadId: number; messageId: number }>(
+      `/api/sites/${site.id}/inbox/send`,
+      {
+        api: auth.api, token: auth.token,
+        body: {
+          to: toList,
+          ...(ccList.length > 0 ? { cc: ccList } : {}),
+          subject,
+          body,
+          from: fromLocal,
+        },
+      },
+    );
+  });
+
+  const fmt = detectOutputFormat(args.output);
+  if (fmt === 'json') return printJson(result);
+  runSuccess({
+    title: 'Email sent',
+    elapsedMs: Date.now() - start,
+    extra: `thread #${result.threadId} • message #${result.messageId}`,
+  });
+}
+
 // ─── Draft sub-namespace ──────────────────────────────────────────────
 
 export const draft = {
