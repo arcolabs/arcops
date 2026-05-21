@@ -353,6 +353,7 @@ export async function send(args: {
   subject?: string;
   from?: string;
   body?: string; 'body-file'?: string; template?: string;
+  attach?: string;
   yes?: string;
   token?: string; api?: string; output?: string;
 }) {
@@ -380,6 +381,8 @@ export async function send(args: {
   });
   if (!body || !body.trim()) { error('Body is empty.'); process.exit(2); }
 
+  const attachPaths = splitList(args.attach);
+
   process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
   process.stderr.write(`Site:     ${site.domain}\n`);
   process.stderr.write(`From:     ${fromLocal}@${site.domain}\n`);
@@ -387,6 +390,9 @@ export async function send(args: {
   if (ccList.length > 0) process.stderr.write(`Cc:       ${ccList.join(', ')}\n`);
   process.stderr.write(`Subject:  ${subject}\n`);
   process.stderr.write(`Source:   ${source}\n`);
+  if (attachPaths.length > 0) {
+    process.stderr.write(`Attach:   ${attachPaths.map((p) => `${basename(p)} (${statSync(p).size}B)`).join(', ')}\n`);
+  }
   process.stderr.write(`Body:     [${body.length} chars]\n`);
   process.stderr.write(body.split('\n').map((l) => '          ' + l).join('\n') + '\n');
   process.stderr.write(`─────────────────────────────────────────────────────\n`);
@@ -398,18 +404,34 @@ export async function send(args: {
 
   const start = Date.now();
   const result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
+    if (attachPaths.length === 0) {
+      return apiPost<{ threadId: number; messageId: number }>(
+        `/api/sites/${site.id}/inbox/send`,
+        {
+          api: auth.api, token: auth.token,
+          body: {
+            to: toList,
+            ...(ccList.length > 0 ? { cc: ccList } : {}),
+            subject,
+            body,
+            from: fromLocal,
+          },
+        },
+      );
+    }
+    // Multipart: comma-joined email lists match the server's splitEmails parse.
+    const fd = new FormData();
+    fd.append('to', toList.join(','));
+    if (ccList.length > 0) fd.append('cc', ccList.join(','));
+    fd.append('subject', subject);
+    fd.append('body', body);
+    fd.append('from', fromLocal);
+    for (const p of attachPaths) {
+      fd.append('attachments', new Blob([readFileSync(p)]), basename(p));
+    }
     return apiPost<{ threadId: number; messageId: number }>(
       `/api/sites/${site.id}/inbox/send`,
-      {
-        api: auth.api, token: auth.token,
-        body: {
-          to: toList,
-          ...(ccList.length > 0 ? { cc: ccList } : {}),
-          subject,
-          body,
-          from: fromLocal,
-        },
-      },
+      { api: auth.api, token: auth.token, body: fd },
     );
   });
 

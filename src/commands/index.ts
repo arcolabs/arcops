@@ -137,7 +137,7 @@ export const COMMANDS: CommandDef[] = [
     handler: (a) => inbox.reply(a) },
   { path: ['inbox', 'send'], summary: 'Send a new email — creates a fresh thread (send scope)',
     positional: ['site'],
-    flags: ['--to', '--cc', '--subject', '--from', '--body', '--body-file', '--template', '--yes', '--output'],
+    flags: ['--to', '--cc', '--subject', '--from', '--body', '--body-file', '--template', '--attach', '--yes', '--output'],
     handler: (a) => inbox.send(a) },
   { path: ['inbox', 'draft', 'create'], summary: 'Save a draft reply',
     positional: ['site', 'thread-id'],
