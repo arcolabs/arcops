@@ -16,7 +16,37 @@ import { renderTemplate, readTemplate } from '../lib/templates';
 import { parseSnoozeUntil } from '../lib/snooze-parse';
 import { splitList } from '../dispatch';
 import { readFileSync, statSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, extname } from 'node:path';
+
+// Map common attachment extensions to MIME types. The server (formidable)
+// trusts the part's Content-Type, and Cloudflare forwards it as-is, so a
+// missing type lands as application/octet-stream — which makes some mail
+// clients show a PDF/image as a generic blob. Dependency-free on purpose;
+// covers the file kinds we actually email (invoices, receipts, exports).
+const MIME_BY_EXT: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.zip': 'application/zip',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
+function mimeForFile(path: string): string {
+  return MIME_BY_EXT[extname(path).toLowerCase()] ?? 'application/octet-stream';
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
@@ -314,7 +344,7 @@ export async function reply(args: {
         const buf = readFileSync(p);
         fd.append(
           'attachments',
-          new Blob([buf]),
+          new Blob([buf], { type: mimeForFile(p) }),
           basename(p),
         );
       }
@@ -427,7 +457,7 @@ export async function send(args: {
     fd.append('body', body);
     fd.append('from', fromLocal);
     for (const p of attachPaths) {
-      fd.append('attachments', new Blob([readFileSync(p)]), basename(p));
+      fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
     }
     return apiPost<{ threadId: number; messageId: number }>(
       `/api/sites/${site.id}/inbox/send`,
