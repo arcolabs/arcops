@@ -86,9 +86,31 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
       try {
         body = JSON.parse(text);
         const j = body as Record<string, unknown>;
-        if (typeof j.error === 'string') detail = j.error;
-        else if (typeof j.message === 'string') detail = j.message;
-        else detail = text.slice(0, 200);
+        if (j.error && typeof j.error === 'object' && typeof (j.error as { code?: unknown }).code === 'string') {
+          // Structured error contract from the server:
+          //   { error: { code, message, detail? } }
+          // Surface code + message, then fold in the most actionable
+          // diagnostic from `detail` (upstream reject reason, or the raw
+          // error) so the agent sees the real cause inline instead of an
+          // opaque status. e.g. for a misconfigured outbound:
+          //   HTTP 502: cf_send_failed: Cloudflare rejected the outbound email. (upstream: email.sending.error.email.invalid)
+          const ee = j.error as { code: string; message?: string; detail?: Record<string, unknown> };
+          const parts: string[] = [ee.code];
+          if (ee.message) parts.push(ee.message);
+          detail = parts.join(': ');
+          if (ee.detail) {
+            const upstream = ee.detail.upstream;
+            const raw = ee.detail.error;
+            if (typeof upstream === 'string') detail += ` (upstream: ${upstream})`;
+            else if (typeof raw === 'string') detail += ` (${raw.slice(0, 160)})`;
+          }
+        } else if (typeof j.error === 'string') {
+          detail = j.error;
+        } else if (typeof j.message === 'string') {
+          detail = j.message;
+        } else {
+          detail = text.slice(0, 200);
+        }
       } catch {
         detail = text.slice(0, 200);
       }
