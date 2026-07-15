@@ -1,5 +1,5 @@
-// `quay template ls / show / edit` — manages reusable reply bodies under
-// ~/.quay/templates/<name>.md. Plain markdown, no DSL. Variables get
+// `arcops template ls / show / edit` — manages reusable reply bodies under
+// ~/.arcops/templates/<name>.md. Plain markdown, no DSL. Variables get
 // substituted at apply time (inbox reply --template / inbox draft create
 // --template); see lib/templates.ts.
 
@@ -17,7 +17,7 @@ export function ls(args: { output?: string }) {
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(rows);
   if (rows.length === 0) {
-    info(`No templates yet. Create one with: quay template edit <name>`);
+    info(`No templates yet. Create one with: arcops template edit <name>`);
     info(`Templates live in ${templatesDir()}`);
     return;
   }

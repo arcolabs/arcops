@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 export function openEditor(initial: string = '', commentPreamble: string = ''): string {
-  const dir = mkdtempSync(resolve(tmpdir(), 'quay-edit-'));
+  const dir = mkdtempSync(resolve(tmpdir(), 'arcops-edit-'));
   const path = resolve(dir, 'reply.md');
   const seed = (commentPreamble ? commentPreamble.split('\n').map(l => `# ${l}`).join('\n') + '\n\n' : '') + initial;
   writeFileSync(path, seed);

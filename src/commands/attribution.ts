@@ -48,7 +48,7 @@ export async function diag(args: {
   info(`  visitor_emails rows:       ${data.visitor_emails_total}`);
   info(`  unique identified emails:  ${data.visitor_emails_unique_emails}`);
   info('');
-  info(`  matchable via backfill:    ${data.matchable_unattributed}  (\`quay attribution backfill --all\` will attribute exactly this many)`);
+  info(`  matchable via backfill:    ${data.matchable_unattributed}  (\`arcops attribution backfill --all\` will attribute exactly this many)`);
 }
 
 // Cloudflare caps origin response at 100s, so each call processes a small batch.

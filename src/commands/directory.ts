@@ -75,7 +75,7 @@ export async function submissions(args: {
   if (fmt === 'json') return printJson(submissions);
 
   if (submissions.length === 0) {
-    info(`No directories registered. Run \`quay directory ls\` to confirm the catalog is seeded.`);
+    info(`No directories registered. Run \`arcops directory ls\` to confirm the catalog is seeded.`);
     return;
   }
 

@@ -3,12 +3,12 @@ import { readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const pkg = JSON.parse(readFileSync(resolve(import.meta.dir, 'package.json'), 'utf8'));
-const out = resolve(import.meta.dir, 'dist/quay.mjs');
+const out = resolve(import.meta.dir, 'dist/arcops.mjs');
 
 const result = await Bun.build({
   entrypoints: [resolve(import.meta.dir, 'src/main.ts')],
   outdir: resolve(import.meta.dir, 'dist'),
-  naming: 'quay.mjs',
+  naming: 'arcops.mjs',
   target: 'node',
   format: 'esm',
   minify: false,
