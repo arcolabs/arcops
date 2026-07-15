@@ -527,7 +527,7 @@ export const draft = {
       info(`No pending drafts on thread ${threadId}.`);
       return;
     }
-    printTable(data.drafts, ['id', 'created_at', 'author_user_id']);
+    printTable(data.drafts, ['id', 'createdAt', 'authorUserId']);
   },
 
   async show(args: {
@@ -538,15 +538,15 @@ export const draft = {
     const site = await resolveSiteOrExit(args.site ?? '', auth);
     const threadId = requireThreadId(args);
     const draftId = requireDraftId(args);
-    const data = await apiGet<{ draft: { id: number; body_text: string; created_at: string } }>(
+    const data = await apiGet<{ draft: { id: number; bodyText: string; createdAt: string } }>(
       `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}`,
       { api: auth.api, token: auth.token },
     );
     const fmt = detectOutputFormat(args.output);
     if (fmt === 'json') return printJson(data.draft);
-    process.stderr.write(`Draft #${data.draft.id}  •  created ${data.draft.created_at}\n`);
-    process.stdout.write(data.draft.body_text);
-    if (!data.draft.body_text.endsWith('\n')) process.stdout.write('\n');
+    process.stderr.write(`Draft #${data.draft.id}  •  created ${data.draft.createdAt}\n`);
+    process.stdout.write(data.draft.bodyText);
+    if (!data.draft.bodyText.endsWith('\n')) process.stdout.write('\n');
   },
 
   async send(args: {
@@ -558,16 +558,16 @@ export const draft = {
     const threadId = requireThreadId(args);
     const draftId = requireDraftId(args);
 
-    const { draft } = await apiGet<{ draft: { id: number; body_text: string; created_at: string } }>(
+    const { draft } = await apiGet<{ draft: { id: number; bodyText: string; createdAt: string } }>(
       `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}`,
       { api: auth.api, token: auth.token },
     );
 
     process.stderr.write(`\n─ Draft preview ─────────────────────────────────────\n`);
     process.stderr.write(`Site:     ${site.domain}\n`);
-    process.stderr.write(`Draft:    #${draft.id} (${draft.created_at})\n`);
-    process.stderr.write(`Body:     [${draft.body_text.length} chars]\n`);
-    process.stderr.write(draft.body_text.split('\n').map((l) => '          ' + l).join('\n') + '\n');
+    process.stderr.write(`Draft:    #${draft.id} (${draft.createdAt})\n`);
+    process.stderr.write(`Body:     [${draft.bodyText.length} chars]\n`);
+    process.stderr.write(draft.bodyText.split('\n').map((l) => '          ' + l).join('\n') + '\n');
     process.stderr.write(`─────────────────────────────────────────────────────\n`);
 
     if (args.yes !== 'true') {
