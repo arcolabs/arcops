@@ -6,11 +6,15 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ROOT } from '../config';
+import { ROOT, migrateLegacy } from '../config';
 
 export const TEMPLATE_EXT = '.md';
 
 export function templatesDir(): string {
+  // Pick up ~/.quay/templates on first use so a template-only legacy install
+  // migrates even without credentials. Idempotent per artifact, so calling
+  // this on every template access is cheap and never clobbers edits.
+  migrateLegacy();
   const dir = resolve(ROOT, 'templates');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
