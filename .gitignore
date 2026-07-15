@@ -8,3 +8,4 @@ dist/
 .idea/
 .vscode/
 .codex
+*.tgz

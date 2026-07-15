@@ -1,17 +1,17 @@
 // Template system for inbox replies. Convention over configuration:
-// markdown files in ~/.quay/templates/<name>.md. No frontmatter, no DSL —
+// markdown files in ~/.arcops/templates/<name>.md. No frontmatter, no DSL —
 // just plain markdown with `{{var}}` placeholders. Two vars are auto-injected
 // from thread context: {{thread_subject}} and {{customer_email}}. Anything
 // else is left as-is so a stray `{{` in the body doesn't error.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { ROOT } from '../config';
 
 export const TEMPLATE_EXT = '.md';
 
 export function templatesDir(): string {
-  const dir = resolve(homedir(), '.quay', 'templates');
+  const dir = resolve(ROOT, 'templates');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }

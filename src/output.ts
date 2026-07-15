@@ -1,4 +1,5 @@
 import pc from 'picocolors';
+import { ApiError } from './api';
 
 export type OutputFormat = 'text' | 'json';
 
@@ -17,6 +18,30 @@ export function info(msg: string)  { process.stderr.write(paint(pc.dim, msg) + '
 export function warn(msg: string)  { process.stderr.write(paint(pc.yellow, '⚠ ' + msg) + '\n'); }
 export function error(msg: string) { process.stderr.write(paint(pc.red, '✖ ' + msg) + '\n'); }
 export function success(msg: string){ process.stderr.write(paint(pc.green, '✓ ' + msg) + '\n'); }
+
+// Render a thrown error for agent-first consumption (contract item 2).
+// stdout stays data-only; errors always go to stderr. In JSON mode (pipe /
+// --output json) the error is emitted as a structured envelope
+// {"error":{code,message,detail?,status?}} so a downstream agent can parse the
+// real cause; in text mode it is the human-readable `✖ <message>` line.
+// Server error.code/detail from the S1 envelope are preserved verbatim when
+// present; unexpected (non-ApiError) throws get code 'internal'.
+export function emitError(e: unknown, outputFlag?: string): void {
+  const fmt = detectOutputFormat(outputFlag);
+  if (fmt === 'json') {
+    const err = e instanceof ApiError
+      ? {
+          code: e.code ?? (e.kind === 'intercept' ? 'request_intercepted' : e.kind === 'timeout' ? 'request_timeout' : e.kind === 'network' ? 'request_failed' : 'api_error'),
+          message: e.message,
+          ...(e.status ? { status: e.status } : {}),
+          ...(e.detail !== undefined ? { detail: e.detail } : {}),
+        }
+      : { code: 'internal', message: (e as Error)?.message ?? String(e) };
+    process.stderr.write(JSON.stringify({ error: err }) + '\n');
+    return;
+  }
+  error((e as Error)?.message ?? String(e));
+}
 
 // stdout = data only.
 export function printJson(data: unknown): void {

@@ -1,13 +1,13 @@
 {
-  "name": "@tritonix/quay",
+  "name": "@arcolab/arcops",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "description": "Agent-first ops cockpit CLI for the Arcops backend (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox).",
   "bin": {
-    "quay": "dist/quay.mjs"
+    "arcops": "dist/arcops.mjs"
   },
   "files": [
-    "dist/quay.mjs"
+    "dist/arcops.mjs"
   ],
   "engines": {
     "node": ">=20"
@@ -16,7 +16,27 @@
     "build": "bun run build.ts",
     "dev": "bun --watch run src/main.ts --",
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "cli",
+    "saas",
+    "ops",
+    "stripe",
+    "analytics",
+    "inbox",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "arcolab",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/arcolabs/arcops.git"
+  },
+  "homepage": "https://github.com/arcolabs/arcops#readme",
+  "bugs": {
+    "url": "https://github.com/arcolabs/arcops/issues"
   },
   "dependencies": {
     "picocolors": "^1.1.1"

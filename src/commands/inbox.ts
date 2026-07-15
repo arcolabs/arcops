@@ -62,6 +62,55 @@ function requireDraftId(args: { 'draft-id'?: string }): number {
   return id;
 }
 
+// --attach is a repeatable flag (one file per occurrence). A comma-separated
+// value like `--attach a.pdf,b.pdf` is a common mistake - the whole string
+// becomes one filename and ENOENTs. Reject it explicitly with a clear message
+// instead of letting it surface as a confusing read/stat error (contract item
+// 1: failures must exit non-zero with an actionable cause).
+function parseAttachPaths(raw: string | undefined): string[] {
+  const paths = splitList(raw);
+  for (const p of paths) {
+    if (p.includes(',')) {
+      error(`--attach takes one file per flag; repeat --attach for multiple files (comma-separated lists are not supported). Got: ${p}`);
+      process.exit(2);
+    }
+  }
+  return paths;
+}
+
+// verify-after-send (contract item 3): after a send-class action returns
+// success, re-fetch the thread and confirm an outbound message actually
+// landed. The server creates the inbox_messages row synchronously in the same
+// request, so if it is missing the email did not send - exit non-zero with a
+// clear cause instead of the old "exit 0 but nothing went out" failure mode.
+// `expectedMessageId` (from send / draft.send responses) is checked first;
+// otherwise a new outbound vs `preSendOutboundIds` proves the send landed.
+async function verifyOutboundLanded(
+  auth: { api: string; token: string },
+  siteId: number,
+  threadId: number,
+  opts: { expectedMessageId?: number; preSendOutboundIds?: Set<number> } = {},
+): Promise<void> {
+  const data = await apiGet<{ messages: Array<{ id: number; direction: string }> }>(
+    `/api/sites/${siteId}/inbox/threads/${threadId}`,
+    { api: auth.api, token: auth.token },
+  );
+  const outbounds = data.messages.filter((m) => m.direction === 'outbound');
+  let landed: boolean;
+  if (opts.expectedMessageId !== undefined) {
+    landed = outbounds.some((m) => m.id === opts.expectedMessageId);
+  } else {
+    const pre = opts.preSendOutboundIds ?? new Set<number>();
+    landed = outbounds.some((m) => !pre.has(m.id));
+  }
+  if (!landed) {
+    throw new Error(
+      `Send returned success but no outbound message landed on thread ${threadId} - the email may not have been sent. ` +
+      `Re-check with: arcops inbox show <site> ${threadId}`,
+    );
+  }
+}
+
 // Resolve reply body from any of: --body, --body-file, --template, $EDITOR.
 // Returns { body, source } so callers can label preview output.
 async function resolveBody(args: {
@@ -83,6 +132,12 @@ async function resolveBody(args: {
     return { body: rendered, source: `template:${args.template}` };
   }
 
+  // pipe / non-TTY must never block on an interactive editor (contract item
+  // 4). Require an explicit body source when stdin is not a TTY.
+  if (!process.stdin.isTTY) {
+    error('No body source provided (--body, --body-file, or --template) and stdin is not a TTY; refusing to open an interactive editor.');
+    process.exit(2);
+  }
   const edited = openEditor('', ctx.editorSeed ?? 'Compose your reply.');
   return { body: edited, source: 'editor' };
 }
@@ -309,7 +364,7 @@ export async function reply(args: {
     body = await buildQuotedReply(body, auth, site.id, threadId, data);
   }
 
-  const attachPaths = splitList(args.attach);
+  const attachPaths = parseAttachPaths(args.attach);
   const recipients = data.thread.participant_emails.join(', ');
   const subject = data.thread.subject || 'Re: (no subject)';
 
@@ -329,6 +384,12 @@ export async function reply(args: {
     const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm send: `);
     if (!ok) { error('Send aborted.'); process.exit(1); }
   }
+
+  // Snapshot outbound message ids before send so verify-after-send can prove
+  // a *new* outbound landed (contract item 3).
+  const preSendOutboundIds = new Set(
+    data.messages.filter((m) => m.direction === 'outbound').map((m) => m.id),
+  );
 
   const start = Date.now();
   await withSpinner(`Sending reply to ${recipients}…`, async () => {
@@ -355,6 +416,7 @@ export async function reply(args: {
       });
     }
   });
+  await verifyOutboundLanded(auth, site.id, threadId, { preSendOutboundIds });
   runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
 }
 
@@ -411,7 +473,7 @@ export async function send(args: {
   });
   if (!body || !body.trim()) { error('Body is empty.'); process.exit(2); }
 
-  const attachPaths = splitList(args.attach);
+  const attachPaths = parseAttachPaths(args.attach);
 
   process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
   process.stderr.write(`Site:     ${site.domain}\n`);
@@ -465,6 +527,10 @@ export async function send(args: {
     );
   });
 
+  // verify-after-send (contract item 3): confirm the outbound message the
+  // server reported actually landed on the thread before claiming success.
+  await verifyOutboundLanded(auth, site.id, result.threadId, { expectedMessageId: result.messageId });
+
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(result);
   runSuccess({
@@ -507,7 +573,7 @@ export const draft = {
     );
     const fmt = detectOutputFormat(args.output);
     if (fmt === 'json') return printJson(result);
-    success(`Draft #${result.draft.id} saved (${source}). Send with: quay inbox draft send ${site.domain} ${result.draft.id}`);
+    success(`Draft #${result.draft.id} saved (${source}). Send with: arcops inbox draft send ${site.domain} ${result.draft.id}`);
   },
 
   async ls(args: {
@@ -582,6 +648,9 @@ export const draft = {
         { api: auth.api, token: auth.token },
       );
     });
+    // verify-after-send (contract item 3): confirm the promoted draft landed
+    // as an outbound message on the thread.
+    await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
     runSuccess({
       title: 'Draft sent',
       elapsedMs: Date.now() - start,

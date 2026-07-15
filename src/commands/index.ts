@@ -29,7 +29,7 @@ export type CommandDef = {
 };
 
 export const COMMANDS: CommandDef[] = [
-  { path: ['auth', 'login'],  summary: 'Save API token to ~/.quay/credentials.json',
+  { path: ['auth', 'login'],  summary: 'Save API token to ~/.arcops/credentials.json',
     flags: ['--token', '--api'],
     handler: (a) => auth.login({ token: a.token, api: a.api }) },
   { path: ['auth', 'status'], summary: 'Show current auth state',
@@ -156,8 +156,8 @@ export const COMMANDS: CommandDef[] = [
     positional: ['site', 'thread-id', 'draft-id'],
     handler: (a) => inbox.draft.rm(a) },
 
-  // ── Templates (~/.quay/templates/<name>.md) ──
-  { path: ['template', 'ls'], summary: 'List reply templates in ~/.quay/templates',
+  // ── Templates (~/.arcops/templates/<name>.md) ──
+  { path: ['template', 'ls'], summary: 'List reply templates in ~/.arcops/templates',
     flags: ['--output'],
     handler: (a) => template.ls({ output: a.output }) },
   { path: ['template', 'show'], summary: 'Print a template body',
