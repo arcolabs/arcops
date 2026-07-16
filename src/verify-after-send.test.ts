@@ -116,3 +116,50 @@ describe('verify-after-send (contract item 3)', () => {
     }
   });
 });
+
+describe('verify-after-send: reply idempotent replay (KEH-116 C1)', () => {
+  test('reply replay returns the original messageId -> verify by existence -> exit 0', async () => {
+    // Regression: on an idempotent replay the server returns the ORIGINAL
+    // messageId (77) from the first send and creates NO new outbound. The
+    // thread already carries outbound 77. verify-after-send must confirm
+    // messageId 77 EXISTS on the thread (expectedMessageId mode), not look for
+    // a NEW outbound - the old pre-send-snapshot approach falsely failed here
+    // because the replayed (pre-existing) outbound was in the snapshot.
+    const replyCalled: string[] = [];
+    const threadJson = () => json({
+      thread: { id: 1, subject: 'hello', participant_emails: ['cust@x.com', 'support@sunor.cc'] },
+      messages: [
+        { id: 50, direction: 'inbound', from_email: 'cust@x.com' },
+        { id: 77, direction: 'outbound' }, // the original outbound, already on the thread
+      ],
+    });
+    const { base, stop } = await mockServer([
+      (req, url) => url.pathname === '/api/sites' && req.method === 'GET'
+        ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] }) : undefined as unknown as Response,
+      // Both the preview GET (before send) and the verify GET (after send) hit
+      // the same thread endpoint and see the same messages, incl. outbound 77.
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? threadJson() : undefined as unknown as Response,
+      // The reply POST returns the replayed messageId (77) - no new outbound.
+      (req, url) => {
+        if (url.pathname === '/api/sites/8/inbox/threads/1/reply' && req.method === 'POST') {
+          replyCalled.push('reply');
+          return json({ messageId: 77 });
+        }
+        return undefined as unknown as Response;
+      },
+    ]);
+
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'reply', 'sunor.cc', '1',
+        '--body', 'hi', '--yes',
+      ]);
+      expect(replyCalled).toEqual(['reply']); // reply fired exactly once
+      expect(res.code).toBe(0); // replay succeeds - no false "no outbound landed" failure
+      expect(res.stderr).toContain('Reply sent');
+    } finally {
+      await stop();
+    }
+  });
+});

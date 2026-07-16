@@ -388,42 +388,39 @@ export async function reply(args: {
     if (!ok) { error('Send aborted.'); process.exit(1); }
   }
 
-  // Snapshot outbound message ids before send so verify-after-send can prove
-  // a *new* outbound landed (contract item 3).
-  const preSendOutboundIds = new Set(
-    data.messages.filter((m) => m.direction === 'outbound').map((m) => m.id),
-  );
-
   // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
   // the server instead of sending a second reply. --idempotency-key overrides.
   const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
 
   const start = Date.now();
-  await withSpinner(`Sending reply to ${recipients}…`, async () => {
+  // Capture the server-returned messageId so verify-after-send confirms THAT
+  // message exists on the thread. This works for both a fresh send (new
+  // messageId) AND an idempotent replay (server returns the original messageId
+  // without creating a new outbound). The old pre-send-snapshot approach
+  // falsely reported failure on replay because no NEW outbound appeared.
+  const result = await withSpinner(`Sending reply to ${recipients}…`, async () => {
     if (attachPaths.length === 0) {
-      await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
-        api: auth.api, token: auth.token, idempotencyKey,
-        body: { body },
-      });
-    } else {
-      const fd = new FormData();
-      fd.append('body', body);
-      for (const p of attachPaths) {
-        const buf = readFileSync(p);
-        fd.append(
-          'attachments',
-          new Blob([buf], { type: mimeForFile(p) }),
-          basename(p),
-        );
-      }
-      await apiCall(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
-        api: auth.api, token: auth.token, idempotencyKey,
-        method: 'POST',
-        body: fd,
-      });
+      return apiPost<{ messageId: number }>(
+        `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
+        { api: auth.api, token: auth.token, idempotencyKey, body: { body } },
+      );
     }
+    const fd = new FormData();
+    fd.append('body', body);
+    for (const p of attachPaths) {
+      const buf = readFileSync(p);
+      fd.append(
+        'attachments',
+        new Blob([buf], { type: mimeForFile(p) }),
+        basename(p),
+      );
+    }
+    return apiCall<{ messageId: number }>(
+      `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
+      { api: auth.api, token: auth.token, idempotencyKey, method: 'POST', body: fd },
+    );
   });
-  await verifyOutboundLanded(auth, site.id, threadId, { preSendOutboundIds });
+  await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
   runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
 }
 
