@@ -163,3 +163,30 @@ describe('verify-after-send: reply idempotent replay (KEH-116 C1)', () => {
     }
   });
 });
+
+describe('draft send --output json (stdout=data contract, KEH-116 C1)', () => {
+  test('draft send prints {messageId} to stdout on success', async () => {
+    const { base, stop } = await mockServer([
+      (req, url) => url.pathname === '/api/sites' && req.method === 'GET'
+        ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] }) : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1/drafts/45' && req.method === 'GET'
+        ? json({ draft: { id: 45, bodyText: 'hi', createdAt: '2026-07-16T00:00:00Z' } })
+        : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1/drafts/45/send' && req.method === 'POST'
+        ? json({ messageId: 676 }) : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? json({ thread: { id: 1 }, messages: [{ id: 676, direction: 'outbound' }] })
+        : undefined as unknown as Response,
+    ]);
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'draft', 'send', 'sunor.cc', '1', '45', '--yes', '--output', 'json',
+      ]);
+      expect(res.code).toBe(0);
+      expect(res.stdout).toContain('"messageId"');
+      expect(res.stdout).toContain('676');
+    } finally {
+      await stop();
+    }
+  });
+});
