@@ -676,6 +676,8 @@ export const draft = {
     // verify-after-send (contract item 3): confirm the promoted draft landed
     // as an outbound message on the thread.
     await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
+    const fmt = detectOutputFormat(args.output);
+    if (fmt === 'json') return printJson(result);
     runSuccess({
       title: 'Draft sent',
       elapsedMs: Date.now() - start,
