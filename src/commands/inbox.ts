@@ -188,7 +188,7 @@ async function buildQuotedReply(
 export async function ls(args: {
   site?: string;
   unread?: string; status?: string; assignee?: string; unassigned?: string;
-  from?: string; search?: string; limit?: string;
+  from?: string; search?: string; limit?: string; cursor?: string;
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
@@ -201,10 +201,14 @@ export async function ls(args: {
   if (args.from) query.from = args.from;
   if (args.search) query.search = args.search;
   if (args.limit) query.limit = args.limit;
+  // Cursor pagination (C4): hand back the opaque `nextCursor` from the previous
+  // page to fetch the next. Treated as a black box - the server owns the format.
+  if (args.cursor) query.cursor = args.cursor;
 
   const data = await apiGet<{
     threads: Record<string, unknown>[];
     counts: Record<string, number>;
+    nextCursor?: string | null;
   }>(`/api/sites/${site.id}/inbox/threads`, { api: auth.api, token: auth.token, query });
 
   const fmt = detectOutputFormat(args.output);
@@ -217,6 +221,11 @@ export async function ls(args: {
     data.threads,
     ['id', 'subject', 'last_message_at', 'unread_for_ops', 'assignee_email', 'status'],
   );
+  // Surface the next-page cursor so an agent (or human) can page through a
+  // large inbox without parsing JSON. Absent => last page.
+  if (data.nextCursor) {
+    info(`More results: arcops inbox ls ${site.domain} --cursor ${data.nextCursor}`);
+  }
 }
 
 export async function show(args: {
