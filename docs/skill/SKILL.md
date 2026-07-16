@@ -165,16 +165,20 @@ Run `arcops --help` for the live catalog. Groups below match the noun structure.
 - `arcops template show <name> [--output json]`
 - `arcops template edit <name>`
 
-Templates live in `~/.arcops/templates/<name>.md` and support variables:
+Templates live in `~/.arcops/templates/<name>.md` and support plain Markdown with `{{var}}` placeholders. Three variables are rendered by the inbox verbs that consume templates:
 
-- `{{thread_subject}}`
-- `{{customer_email}}`
-- `{{site_domain}}`
+- `{{thread_subject}}` — the thread subject (omitted / left literal for `inbox send`, which starts a new thread)
+- `{{customer_email}}` — the sender of the most recent inbound message, falling back to the thread's first participant
+- `{{site_domain}}` — the resolved site's domain (rendered consistently in `inbox reply`, `inbox draft create`, and `inbox send` as of KEH-131)
+
+Unknown placeholders are intentionally left as-is, so a customer message containing `{{...` is not mangled and typos surface visibly in the preview.
 
 Use a template:
 
 ```bash
 arcops inbox reply example.com 123 --template welcome --yes
+arcops inbox draft create example.com 123 --template welcome
+arcops inbox send example.com --to new@example.com --subject Welcome --template welcome --yes
 ```
 
 ### Directories
@@ -206,7 +210,15 @@ When an `inbox send/reply/draft send` command exits `0`, the CLI has already re-
 
 ## MCP
 
-Arcops also exposes an MCP server at `https://arcops.cc/api/mcp` using the same org API key for authentication. When using MCP, the same scopes apply and the same verb surface is available. Use the CLI when you need local file access (templates, attachments) or when the MCP server is unreachable.
+Arcops also exposes an MCP server at `https://arcops.cc/api/mcp`, authenticated with the same org API key (`Bearer ts_…`). As of today it registers **5 tools**:
+
+- `list_sites` — list every site in the portfolio.
+- `get_site_context` — read a site's accumulated Context Tree.
+- `list_inbox_threads` — list a site's email inbox threads.
+- `get_inbox_thread` — read a single thread's full message stream.
+- `propose_context_update` — propose an edit to a Context Tree node (requires `write` scope; creates a human approval action).
+
+Exposing the full CLI verb surface through MCP is planned as part of the C2 verb-registry implementation. Until then, use the CLI for revenue, traffic, GSC, campaigns, funnels, customers, and sending email.
 
 ## Quick verification checklist
 
