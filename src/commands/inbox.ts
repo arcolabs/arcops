@@ -146,10 +146,11 @@ async function resolveBody(args: {
 function templateVarsFromThread(thread: {
   subject?: string | null;
   participant_emails?: string[];
-}, lastInboundFrom?: string): Record<string, string | undefined> {
+}, siteDomain: string, lastInboundFrom?: string): Record<string, string | undefined> {
   return {
     thread_subject: thread.subject ?? '',
     customer_email: lastInboundFrom ?? thread.participant_emails?.[0] ?? '',
+    site_domain: siteDomain,
   };
 }
 
@@ -355,7 +356,7 @@ export async function reply(args: {
   );
 
   const lastInboundFrom = [...data.messages].reverse().find((m) => m.direction === 'inbound')?.from_email;
-  const vars = templateVarsFromThread(data.thread, lastInboundFrom);
+  const vars = templateVarsFromThread(data.thread, site.domain, lastInboundFrom);
 
   let { body, source } = await resolveBody(args, {
     editorSeed: `Reply to thread #${threadId} (${data.thread.subject}) on ${site.domain}.`,
@@ -569,7 +570,7 @@ export const draft = {
       { api: auth.api, token: auth.token },
     );
     const lastInboundFrom = [...data.messages].reverse().find((m) => m.direction === 'inbound')?.from_email;
-    const vars = templateVarsFromThread(data.thread, lastInboundFrom);
+    const vars = templateVarsFromThread(data.thread, site.domain, lastInboundFrom);
 
     let { body, source } = await resolveBody(args, {
       editorSeed: `Draft reply to thread #${threadId} on ${site.domain}\nLines starting with # are stripped.`,
