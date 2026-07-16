@@ -39,7 +39,7 @@ Rationale:
 
 - The CLI repo is where the agent-facing command vocabulary is authored and tested today.
 - npm already publishes `@arcolab/arcops`; adding a conditional export `"./verbs"` costs no extra package.
-- The server only needs the registry at **build time** to generate MCP tool schemas and TanStack Start route wiring. It can import the types from the CLI package as a `devDependency`.
+- The server only needs the registry at **build time** to generate MCP tool schemas and TanStack Start route wiring. It can import the registry types (`VerbDef`, `VerbScope`, etc.) from the CLI package as a `devDependency`. Response types remain local to each repo (see §4.2).
 - S4 (TanStack Start migration) and S7 (api-key scope) are moving fast. A third package would create a coordination tax we do not need while the verb set is still small (~15 verbs now, maybe 25 in v1).
 
 Escape hatch: if the registry later expands to include provider contracts, webhook payloads or UI forms, split it into `@arcolab/arcops-verbs`. The escape path is trivial because the registry is a pure data file + generated types.
@@ -61,6 +61,7 @@ export type VerbArg = {
   positional?: boolean;         // true => bound by order, not --flag
   repeatable?: boolean;         // true => flag may appear multiple times
   enum?: string[];              // required when type === 'enum'
+  cliOnly?: boolean;            // true => CLI-only flag (e.g. --yes); never exposed to MCP
   description: string;          // used in --help and MCP tool description
 };
 
@@ -81,9 +82,14 @@ export type VerbDef = {
   scope: VerbScope;
   idempotent: boolean;          // C1: drives Idempotency-Key behavior
   args: VerbArg[];
-  http: HttpMapping;
+  local?: boolean;              // true => no HTTP call; handled entirely in CLI
+  http?: HttpMapping;           // required unless local === true
   outputShape: string;          // pointer to a TypeScript type name (see §4.2)
 };
+
+// Invariant enforced by a schema test:
+//   (local === true && http === undefined) XOR (local !== true && http !== undefined)
+// A verb is either remote (has an HTTP mapping) or local (handled by the CLI runtime).
 
 export const VERBS: VerbDef[] = [
   // populated in §6 migration
@@ -102,15 +108,15 @@ A key with scope `send` can call verbs of scope `read` or `write`; a key with sc
 
 ### 4.2 Output shape pointers
 
-The registry does not embed JSON Schema for response bodies. Instead it points to a TypeScript type defined in the consumer:
+The registry does not embed JSON Schema for response bodies. Instead it carries a lightweight string pointer to a TypeScript type name that each consumer is expected to define locally:
 
 ```ts
 outputShape: 'RevenueResponse';
 ```
 
-Both repos share a thin `types/` package (re-exported from `@arcolab/arcops/verbs`) containing only response type declarations. This keeps the registry readable while still giving MCP a way to describe return shapes (as opaque text references for now; full response schemas are P2 if needed).
+The pointer is a **cross-repo naming convention**, not a shared code dependency. The CLI holds its response types under `src/commands/` (e.g. `RevenueResponse` in `src/commands/revenue.ts`); the server holds its own response types where it implements the tool or route. This keeps `@arcolab/arcops/verbs` free of response-schema churn and avoids coupling the two repos through type imports.
 
-If a response shape is not yet modeled, the pointer may be `'unknown'`.
+If a response shape is not yet modeled, the pointer may be `'unknown'`. Each repo's consistency test checks that every non-`'unknown'` pointer resolves to an actual exported type in that repo; the registry itself does not enforce this.
 
 ### 4.3 Idempotency
 
@@ -126,8 +132,9 @@ If a response shape is not yet modeled, the pointer may be `'unknown'`.
 2. A generator (`src/verbs/to-cli.ts`) transforms `VERBS` into the `CommandDef[]` shape expected by dispatch:
    - `path` from `id` split on `:`.
    - `summary` from `summary`.
-   - `flags` from non-positional args.
+   - `flags` from non-positional args **excluding** `cliOnly: true` args.
    - `positional` from args marked `positional`.
+   - `cliOnly` args (e.g. `--yes`, `--output`) are appended by the CLI generator; they are not part of the shared contract and never reach MCP.
 3. Handlers remain hand-written but receive a strongly typed args object derived from the registry. They keep responsibility for:
    - TTY output formatting (`printTable`, `printKV`).
    - Interactive guardrails (`--yes`, `confirmByTyping`, `$EDITOR`).
@@ -144,7 +151,7 @@ import * as handlers from './handlers';   // existing modules, reorganized
 export const COMMANDS = generateCommandDefs(VERBS, handlers);
 ```
 
-A local-only verb such as `template edit` is represented in the registry with `http: undefined` and a special `local: true` flag; the generator wires it to a local handler instead of an HTTP path.
+A local-only verb such as `template edit` is represented in the registry with `local: true` and no `http` field; the generator wires it to a local handler instead of an HTTP path. This satisfies the invariant in §4: local verbs have no server-side counterpart.
 
 ### 5.2 MCP tool surface
 
@@ -156,9 +163,11 @@ A generator (`server/src/lib/agent/verbs-to-mcp.ts`) produces:
 {
   name: verb.id.replace(/:/g, '_'),     // MCP convention: snake_case
   description: verb.description ?? verb.summary,
-  inputSchema: jsonSchemaFromArgs(verb.args),
+  inputSchema: jsonSchemaFromArgs(verb.args.filter(a => !a.cliOnly)),
 }
 ```
+
+Args marked `cliOnly: true` are filtered out so that interactive guardrails (`--yes`, `--output`) never appear in MCP metadata.
 
 Scope filtering is performed at runtime using the same `scopeAllows` helper from S7:
 
@@ -226,7 +235,9 @@ While legacy and generated catalogs coexist, a test file `src/verbs/registry-con
 2. Every legacy `CommandDef.path` resolves to exactly one `VerbDef.id`.
 3. Flag names are consistent (kebab CLI name ↔ snake registry name).
 4. Positional binding order matches.
-5. Every verb’s `scope` has a server-side integration test in the server repo (read/write/send gate).
+5. Every verb satisfies the local/remote invariant from §4.
+6. No `cliOnly` arg leaks into the MCP-facing arg list.
+7. Every verb’s `scope` has a server-side integration test in the server repo (read/write/send gate).
 
 The consistency test is the bridge; once Phase 3 removes legacy commands, it shrinks to a smaller schema-validation test.
 
@@ -274,7 +285,7 @@ When `arcops verbs --json` is called with a token, the CLI can optionally hit a 
 
 ## 8. Open questions / next design gates
 
-1. **Local-only verbs** (`template edit`, `auth login`, `auth logout`) do not map to an HTTP verb. We add `local: true` and omit `http`. Is that acceptable or should local verbs live outside the registry?
+1. ~~**Local-only verbs** (`template edit`, `auth login`, `auth logout`) do not map to an HTTP verb. We add `local: true` and omit `http`. Is that acceptable or should local verbs live outside the registry?~~ **Resolved:** local verbs stay in the registry with `local: true` and `http` omitted; the invariant in §4 makes the boundary explicit.
 2. **Response schemas** are currently type pointers. Do we want inline JSON Schema in the registry for richer MCP descriptions? Recommendation: no for P1; add when a concrete consumer needs it.
 3. **MCP tool naming**: should `inbox:reply` become `inbox_reply` or `reply_inbox`? Pick one and document it. Recommendation: `inbox_reply` (namespace first) for stable sorting.
 4. **Server implementation mapping**: should MCP call HTTP endpoints or reuse `tool-impl.ts`? Recommendation: keep `tool-impl.ts` for in-app agent and MCP; do not route MCP through HTTP, to preserve the existing cage and audit trail.
@@ -316,7 +327,7 @@ When `arcops verbs --json` is called with a token, the CLI can optionally hit a 
     { name: 'body_file', cliName: 'body-file', type: 'string', description: 'Path to a file containing the body.' },
     { name: 'template', type: 'string', description: 'Name of a local template.' },
     { name: 'attach', type: 'string', repeatable: true, description: 'Attachment path; repeat for multiple files.' },
-    { name: 'yes', type: 'boolean', description: 'Skip interactive confirmation.' },
+    { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip interactive confirmation.' },
   ],
   http: {
     method: 'POST',
@@ -335,7 +346,6 @@ When `arcops verbs --json` is called with a token, the CLI can optionally hit a 
   args: [
     { name: 'name', type: 'string', required: true, positional: true, description: 'Template name.' },
   ],
-  http: undefined,
   outputShape: 'void',
 }
 ```
