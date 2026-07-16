@@ -1,8 +1,9 @@
 // Template system for inbox replies. Convention over configuration:
 // markdown files in ~/.arcops/templates/<name>.md. No frontmatter, no DSL —
-// just plain markdown with `{{var}}` placeholders. Two vars are auto-injected
-// from thread context: {{thread_subject}} and {{customer_email}}. Anything
-// else is left as-is so a stray `{{` in the body doesn't error.
+// just plain markdown with `{{var}}` placeholders. Three vars are auto-injected
+// from thread context: {{thread_subject}}, {{customer_email}}, and
+// {{site_domain}}. Anything else is left as-is so a stray `{{` in the body
+// doesn't error.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';

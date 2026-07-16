@@ -14,6 +14,7 @@ import { openEditor } from '../lib/editor';
 import { confirmByTyping } from '../lib/confirm';
 import { renderTemplate, readTemplate } from '../lib/templates';
 import { parseSnoozeUntil } from '../lib/snooze-parse';
+import { deriveDraftSendKey, deriveReplyKey, deriveSendKey } from '../lib/idempotency-key';
 import { splitList } from '../dispatch';
 import { readFileSync, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
@@ -145,10 +146,11 @@ async function resolveBody(args: {
 function templateVarsFromThread(thread: {
   subject?: string | null;
   participant_emails?: string[];
-}, lastInboundFrom?: string): Record<string, string | undefined> {
+}, siteDomain: string, lastInboundFrom?: string): Record<string, string | undefined> {
   return {
     thread_subject: thread.subject ?? '',
     customer_email: lastInboundFrom ?? thread.participant_emails?.[0] ?? '',
+    site_domain: siteDomain,
   };
 }
 
@@ -341,6 +343,7 @@ export async function reply(args: {
   site?: string; 'thread-id'?: string;
   body?: string; 'body-file'?: string; template?: string;
   attach?: string; quote?: string; yes?: string;
+  'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
@@ -353,7 +356,7 @@ export async function reply(args: {
   );
 
   const lastInboundFrom = [...data.messages].reverse().find((m) => m.direction === 'inbound')?.from_email;
-  const vars = templateVarsFromThread(data.thread, lastInboundFrom);
+  const vars = templateVarsFromThread(data.thread, site.domain, lastInboundFrom);
 
   let { body, source } = await resolveBody(args, {
     editorSeed: `Reply to thread #${threadId} (${data.thread.subject}) on ${site.domain}.`,
@@ -391,11 +394,15 @@ export async function reply(args: {
     data.messages.filter((m) => m.direction === 'outbound').map((m) => m.id),
   );
 
+  // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
+  // the server instead of sending a second reply. --idempotency-key overrides.
+  const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
+
   const start = Date.now();
   await withSpinner(`Sending reply to ${recipients}…`, async () => {
     if (attachPaths.length === 0) {
       await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
-        api: auth.api, token: auth.token,
+        api: auth.api, token: auth.token, idempotencyKey,
         body: { body },
       });
     } else {
@@ -410,7 +417,7 @@ export async function reply(args: {
         );
       }
       await apiCall(`/api/sites/${site.id}/inbox/threads/${threadId}/reply`, {
-        api: auth.api, token: auth.token,
+        api: auth.api, token: auth.token, idempotencyKey,
         method: 'POST',
         body: fd,
       });
@@ -447,6 +454,7 @@ export async function send(args: {
   body?: string; 'body-file'?: string; template?: string;
   attach?: string;
   yes?: string;
+  'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
@@ -494,13 +502,18 @@ export async function send(args: {
     if (!ok) { error('Send aborted.'); process.exit(1); }
   }
 
+  // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
+  // the server instead of sending a second email. --idempotency-key overrides.
+  const idempotencyKey = args['idempotency-key']
+    ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal }, attachPaths);
+
   const start = Date.now();
   const result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
     if (attachPaths.length === 0) {
       return apiPost<{ threadId: number; messageId: number }>(
         `/api/sites/${site.id}/inbox/send`,
         {
-          api: auth.api, token: auth.token,
+          api: auth.api, token: auth.token, idempotencyKey,
           body: {
             to: toList,
             ...(ccList.length > 0 ? { cc: ccList } : {}),
@@ -523,7 +536,7 @@ export async function send(args: {
     }
     return apiPost<{ threadId: number; messageId: number }>(
       `/api/sites/${site.id}/inbox/send`,
-      { api: auth.api, token: auth.token, body: fd },
+      { api: auth.api, token: auth.token, idempotencyKey, body: fd },
     );
   });
 
@@ -557,7 +570,7 @@ export const draft = {
       { api: auth.api, token: auth.token },
     );
     const lastInboundFrom = [...data.messages].reverse().find((m) => m.direction === 'inbound')?.from_email;
-    const vars = templateVarsFromThread(data.thread, lastInboundFrom);
+    const vars = templateVarsFromThread(data.thread, site.domain, lastInboundFrom);
 
     let { body, source } = await resolveBody(args, {
       editorSeed: `Draft reply to thread #${threadId} on ${site.domain}\nLines starting with # are stripped.`,
@@ -617,6 +630,7 @@ export const draft = {
 
   async send(args: {
     site?: string; 'thread-id'?: string; 'draft-id'?: string; yes?: string;
+    'idempotency-key'?: string;
     token?: string; api?: string; output?: string;
   }) {
     const auth = resolveAuth(args);
@@ -641,11 +655,16 @@ export const draft = {
       if (!ok) { error('Send aborted.'); process.exit(1); }
     }
 
+    // C1/KEH-116: draftId is the natural stable key - a retry of the same
+    // draft send reuses it, so the server replays the first result instead of
+    // sending a second outbound. --idempotency-key overrides.
+    const idempotencyKey = args['idempotency-key'] ?? deriveDraftSendKey(site.id, draftId);
+
     const start = Date.now();
     const result = await withSpinner(`Sending draft #${draftId}…`, async () => {
       return apiPost<{ messageId: number }>(
         `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}/send`,
-        { api: auth.api, token: auth.token },
+        { api: auth.api, token: auth.token, idempotencyKey },
       );
     });
     // verify-after-send (contract item 3): confirm the promoted draft landed

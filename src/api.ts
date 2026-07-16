@@ -37,6 +37,10 @@ type Opts = {
   body?: unknown;
   timeoutMs?: number;
   query?: Record<string, string | number | undefined>;
+  // C1/KEH-116: when set, sent as the `Idempotency-Key` header so the server
+  // can dedupe retries of the same logical write (email send/reply/draft send)
+  // instead of dispatching a second side effect. Read verbs ignore this.
+  idempotencyKey?: string;
 };
 
 export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T> {
@@ -57,6 +61,7 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     'x-arcops-cli-version': cliVersion,
   };
   if (opts.token) headers['authorization'] = `Bearer ${opts.token}`;
+  if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
 
   // Body shaping: FormData -> let fetch set its own multipart boundary;
   // anything else with a value -> JSON. Undefined body = no body, no header.
