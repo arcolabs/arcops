@@ -22,10 +22,10 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 ```
 
 ## Two-repo workflow
-- Server repo: `~/projects/saas/quay/` (Next.js, Zeabur) = `arcolabs/arcops-server`. Endpoints, auth middleware, schema, mint-token script. Production: `https://ops.arco.video` (Tencent Tokyo; the old `tritonix.cn` service is retiring).
+- Server repo: `~/projects/saas/quay/` (Next.js, Zeabur) = `arcolabs/arcops-server`. Endpoints, auth middleware, schema, mint-token script. Production: `https://arcops.cc` (Tencent Tokyo; `tritonix.cn` is a legacy alias until external pointers migrate, `ops.arco.video` was unbound 2026-07-16).
 - CLI repo: this one (`~/projects/saas/quay-cli/`) = `arcolabs/arcops`. Distributed via npm (`@arcolab/arcops`); `bun link` for local dev.
 - Cross-repo work: split commits via `git -C <path>`. Server change must `git push` to trigger Zeabur deploy before the CLI can use it.
-- New endpoint or scope change in server -> after deploy: re-test affected `arcops` command end-to-end against `https://ops.arco.video`.
+- New endpoint or scope change in server -> after deploy: re-test affected `arcops` command end-to-end against `https://arcops.cc`.
 
 ## Directory map
 - `src/main.ts` - entrypoint. Awaits `dispatch(argv)`, exits with returned code.
@@ -33,7 +33,7 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 - `src/commands/index.ts` - `COMMANDS` catalog. **All command registration happens here**. Adding a command = appending to this array; do not switch on command name elsewhere.
 - `src/commands/*.ts` - handlers, one file per noun. Each handler receives a flag/positional bag, never raw argv.
 - `src/api.ts` - `apiCall<T>` + typed `apiGet/apiPost/apiDelete`. All HTTP goes through here. Surfaces CF Access intercept and non-JSON responses as `kind: 'intercept'` errors (contract item 5). Preserves the server's structured `error.code`/`detail` on `ApiError` (contract item 2).
-- `src/config.ts` - `~/.arcops/credentials.json` (token + api) and `~/.arcops/config.json`. `resolveAuth(flags)` precedence: flag -> `ARCOPS_API` env (QUAY_API compat) -> file -> default (`https://ops.arco.video`). Auto-migrates `~/.quay/` -> `~/.arcops/` on first run (normalizes the retired `tritonix.cn` default), leaving the legacy dir as a backup.
+- `src/config.ts` - `~/.arcops/credentials.json` (token + api) and `~/.arcops/config.json`. `resolveAuth(flags)` precedence: flag -> `ARCOPS_API` env (QUAY_API compat) -> file -> default (`https://arcops.cc`; retired defaults tritonix.cn / ops.arco.video normalize on read). Auto-migrates `~/.quay/` -> `~/.arcops/` on first run (normalizes the retired `tritonix.cn` default), leaving the legacy dir as a backup.
 - `src/output.ts` - TTY-aware `detectOutputFormat`, `printJson`, `printTable`, `info/warn/error/success` (stderr only), `emitError` (agent-first error rendering).
 - `src/lib/site-resolve.ts` - accepts numeric id or domain, fuzzy-matches, errors on ambiguity.
 - `src/lib/confirm.ts` + `src/lib/editor.ts` - `$EDITOR` body input + terraform-style "type the site domain to confirm" gate for destructive sends. Both refuse to run when stdin is not a TTY (contract item 4).
@@ -74,7 +74,7 @@ The dispatcher consumes `path` tokens, then binds positionals by name. **Never `
 ## Gotchas
 - **Bun lockfile**: `bun add` can hang on cold cache ("Resolving dependencies"). Workaround: `npm install <pkg>`, then `bun install` migrates `package-lock.json` -> `bun.lock`, then delete `package-lock.json`. Commit `bun.lock`, never `package-lock.json`.
 - **Build typecheck**: `build.ts` uses `import.meta.dir` and `Bun.build` - these need `@types/bun` in `tsconfig.json` types. Without it, `tsc --noEmit` fails.
-- **CF Access in front of the API**: `ops.arco.video` has a Bypass + Everyone policy on `/api/*` so Bearer tokens reach Next.js. If you ever see `apiCall` throw "Cloudflare Access intercepted the request to /api/...", the bypass policy in CF Zero Trust dashboard ("Public Endpoints" app) is missing or misconfigured. Re-add the destination `ops.arco.video/api/*`.
+- **CF Access intercepts (legacy domains only)**: `arcops.cc` is a plain proxied zone with NO CF Access app - Bearer tokens always reach the server. Only `tritonix.cn` still sits behind CF Access (Bypass + Everyone on `/api/*`). If `apiCall` ever throws "Cloudflare Access intercepted the request to /api/...", the request went to a legacy domain whose bypass policy is missing/misconfigured, or a custom `--api` pointed somewhere gated.
 - **`apiCall` does not follow redirects**: `redirect: 'manual'` is intentional. CF Access redirects to its OAuth page silently broke the CLI before this was added - fetch followed the redirect, got HTML 200, JSON.parse fell back to a string, destructuring `{ sites }` returned `undefined`, commands silently printed `"undefined"` to stdout. Don't change to `'follow'`. (Contract item 5 now turns this into an explicit intercept error.)
 - **`bun link` vs `npm link`**: both create global symlinks but in different prefixes. If `which arcops` shows a path under `.nvm/versions/node/.../bin/`, an old `npm link` is winning over our `bun link`. Run `npm unlink -g @arcolab/arcops` (or legacy `@tritonix/quay` / `@traffic-source/cli` / stale `ts`/`quay` binaries) to clean up.
 - **Server changes are not live until pushed**: see the server repo's `CLAUDE.md` Deployment section. Local-only `bun run db:migrate` against prod also needed for new tables.

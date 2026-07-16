@@ -44,8 +44,13 @@ export const TEMPLATES_DIR = P.templatesDir;
 const CRED_PATH = P.credPath;
 const CFG_PATH = P.cfgPath;
 
-const LEGACY_DEFAULT_API = 'https://tritonix.cn';
-export const DEFAULT_API = 'https://ops.arco.video';
+// Retired default API URLs, normalized to DEFAULT_API wherever a saved config
+// holds one verbatim (custom values like localhost are always preserved):
+// tritonix.cn (quay era) and ops.arco.video (brief arcops interim domain,
+// unbound 2026-07-16 - requests to it dead-end).
+const RETIRED_DEFAULT_APIS = ['https://tritonix.cn', 'https://ops.arco.video'];
+const LEGACY_DEFAULT_API = RETIRED_DEFAULT_APIS[0];
+export const DEFAULT_API = 'https://arcops.cc';
 
 export type Credentials = { token: string; api: string };
 export type Config = { defaultSite?: string };
@@ -93,9 +98,10 @@ export function migrateLegacy(home: string = homedir()): void {
   let touched = false;
 
   // Credentials: rewrite the saved api URL when it is exactly the retired
-  // default (https://tritonix.cn -> https://ops.arco.video) so migrated
+  // quay-era default (https://tritonix.cn -> DEFAULT_API) so migrated
   // installs point at the live server. Custom api values (e.g. localhost) are
-  // preserved.
+  // preserved. (Post-migration retired defaults are additionally normalized
+  // in-memory by loadCredentials.)
   if (!existsSync(p.credPath) && existsSync(p.legacyCredPath)) {
     const legacy = readJson<Partial<Credentials>>(p.legacyCredPath, {});
     const api = legacy.api === LEGACY_DEFAULT_API ? DEFAULT_API : legacy.api;
@@ -135,7 +141,13 @@ export function migrateLegacy(home: string = homedir()): void {
 
 export function loadCredentials(): Partial<Credentials> {
   migrateLegacy();
-  return readJson(CRED_PATH, {});
+  const creds = readJson<Partial<Credentials>>(CRED_PATH, {});
+  // Saved configs from earlier releases point at a retired default domain;
+  // normalize in-memory so those installs keep working without a re-login.
+  if (creds.api && RETIRED_DEFAULT_APIS.includes(creds.api)) {
+    creds.api = DEFAULT_API;
+  }
+  return creds;
 }
 export function saveCredentials(c: Credentials) {
   ensureRoot(ROOT);

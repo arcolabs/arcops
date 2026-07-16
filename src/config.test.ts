@@ -51,7 +51,7 @@ describe('migrateLegacy', () => {
 
     const migrated = JSON.parse(readFileSync(join(home, '.arcops', 'credentials.json'), 'utf8'));
     expect(migrated.token).toBe('ts_x');
-    expect(migrated.api).toBe('https://ops.arco.video');
+    expect(migrated.api).toBe('https://arcops.cc');
   });
 
   it('preserves a custom api when migrating credentials', () => {
