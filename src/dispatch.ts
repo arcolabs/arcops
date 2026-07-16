@@ -1,7 +1,10 @@
 // src/dispatch.ts
 import pc from 'picocolors';
-import { COMMANDS, type CommandDef } from './commands';
-import { error, info, emitError, colorOn, paint } from './output';
+import {
+  COMMANDS, type CommandDef,
+  flagName, flagType, positionalName, positionalType,
+} from './commands';
+import { error, info, emitError, colorOn } from './output';
 import { VERSION } from './version';
 
 // Trie router. Walk argv tokens, longest-prefix match against COMMANDS[].path.
@@ -75,13 +78,37 @@ function listChildren(prefix: string[]): CommandDef[] {
   );
 }
 
+// Flags that work on every command (parsed by resolveAuth / detectOutputFormat,
+// not bound per-handler). Hidden from the per-command flag list so verb help
+// doesn't duplicate them under "Flags" - they're summarized in the Global line.
+const GLOBAL_FLAG_NAMES = new Set(['--output', '--token', '--api']);
+
 export async function dispatch(argv: string[]): Promise<number> {
   const parsed = parseArgv(argv);
   if (parsed.flags.version || (argv.length === 1 && argv[0] === '--version')) {
     process.stdout.write(VERSION + '\n');
     return 0;
   }
-  if (parsed.tokens.length === 0 || parsed.flags.help) {
+
+  // --help is explicit reference output -> stdout (capturable by agents / pipes,
+  // consistent with --version). Matched verb -> verb help; intermediate node ->
+  // its subcommands; otherwise -> root help.
+  if (parsed.flags.help) {
+    const { cmd } = findCommand(parsed.tokens);
+    if (cmd) {
+      process.stdout.write(renderVerbHelp(cmd));
+      return 0;
+    }
+    const children = listChildren(parsed.tokens);
+    if (parsed.tokens.length > 0 && children.length > 0) {
+      process.stdout.write(renderSubcommands(parsed.tokens, children));
+      return 0;
+    }
+    process.stdout.write(renderRoot(false));
+    return 0;
+  }
+
+  if (parsed.tokens.length === 0) {
     printRoot();
     return 0;
   }
@@ -105,7 +132,7 @@ export async function dispatch(argv: string[]): Promise<number> {
   // Bind positionals by name from cmd.positional (if any)
   if (cmd.positional) {
     for (let i = 0; i < cmd.positional.length && i < positional.length; i++) {
-      args[cmd.positional[i]] = positional[i];
+      args[positionalName(cmd.positional[i])] = positional[i];
     }
   }
 
@@ -121,20 +148,90 @@ export async function dispatch(argv: string[]): Promise<number> {
   }
 }
 
-function printRoot() {
-  const line = paint(pc.dim, '─'.repeat(50));
-  process.stderr.write('\n');
-  if (colorOn) {
-    process.stderr.write(`${pc.cyan('arcops')} ${pc.dim('- indie SaaS ops cockpit')} ${pc.dim(`v${VERSION}`)}\n`);
+// Agent-readable per-verb help (C4 / KEH-118). Returns the full text so it can
+// be written to stdout (dispatch) or asserted on (tests). Layout:
+//   arcops <path> - <summary>
+//   Usage: arcops <path> [positionals] [flags]
+//   Positionals: <name>  <type>
+//   Flags:       --<name> <type>     (command-specific; globals omitted)
+//   Examples:    $ arcops <example>
+//   Global flags: ...
+export function renderVerbHelp(cmd: CommandDef): string {
+  const out: string[] = [];
+  const title = `arcops ${cmd.path.join(' ')}`;
+  out.push(`${title} - ${cmd.summary}`);
+  out.push('');
+
+  const posPart = (cmd.positional ?? []).map((p) => `<${positionalName(p)}>`).join(' ');
+  out.push(`Usage: ${title}${posPart ? ' ' + posPart : ''} [flags]`);
+  out.push('');
+
+  if (cmd.positional && cmd.positional.length) {
+    out.push('Positionals:');
+    const rows = cmd.positional.map((p) => [`  ${positionalName(p)}`, positionalType(p)]);
+    const w = Math.max(...rows.map((r) => r[0].length));
+    for (const [n, t] of rows) out.push(`${n.padEnd(w)}  ${t}`);
+    out.push('');
+  }
+
+  const flags = (cmd.flags ?? []).filter((f) => !GLOBAL_FLAG_NAMES.has(flagName(f)));
+  if (flags.length) {
+    out.push('Flags:');
+    const rows = flags.map((f) => [`  ${flagName(f)}`, flagType(f)]);
+    const w = Math.max(...rows.map((r) => r[0].length));
+    for (const [n, t] of rows) out.push(`${n.padEnd(w)}  ${t}`);
+    out.push('');
+  }
+
+  if (cmd.examples && cmd.examples.length) {
+    out.push('Examples:');
+    for (const ex of cmd.examples) out.push(`  $ arcops ${ex}`);
+    out.push('');
+  }
+
+  out.push('Global flags: --token, --api, --output text|json, --help, --version');
+  out.push('');
+  return out.join('\n');
+}
+
+function renderSubcommands(prefix: string[], children: CommandDef[]): string {
+  const out: string[] = [];
+  out.push(`Subcommands of \`arcops ${prefix.join(' ')}\`:`);
+  for (const c of children) {
+    out.push(`  ${c.path.slice(prefix.length).join(' ').padEnd(20)} ${c.summary}`);
+  }
+  out.push('');
+  out.push('Global flags: --token, --api, --output text|json, --help, --version');
+  out.push('');
+  return out.join('\n');
+}
+
+// Render root help as a string (single source of truth for both the no-args
+// stderr prompt and `arcops --help` stdout). `colored` is true only for the
+// stderr no-args path - stdout is never colored (output discipline).
+function renderRoot(colored: boolean): string {
+  const dim = (s: string) => (colored ? pc.dim(s) : s);
+  const out: string[] = [];
+  const line = '─'.repeat(50);
+  out.push('');
+  if (colored) {
+    out.push(`${pc.cyan('arcops')} ${pc.dim('- indie SaaS ops cockpit')} ${pc.dim(`v${VERSION}`)}`);
   } else {
-    process.stderr.write(`arcops - indie SaaS ops cockpit v${VERSION}\n`);
+    out.push(`arcops - indie SaaS ops cockpit v${VERSION}`);
   }
-  process.stderr.write(`${line}\n`);
-  process.stderr.write(`${paint(pc.dim, 'Usage:')} arcops <command> [args] [--flags]\n\n`);
+  out.push(line);
+  out.push(`${dim('Usage:')} arcops <command> [args] [--flags]`);
+  out.push('');
   // Render from catalog (single source of truth).
-  process.stderr.write(`${paint(pc.dim, 'Commands:')}\n`);
+  out.push(dim('Commands:'));
   for (const c of COMMANDS) {
-    process.stderr.write(`  ${c.path.join(' ').padEnd(28)} ${paint(pc.dim, c.summary)}\n`);
+    out.push(`  ${c.path.join(' ').padEnd(28)} ${dim(c.summary)}`);
   }
-  process.stderr.write(`\nGlobal flags: ${paint(pc.dim, '--token, --api, --output text|json, --help, --version')}\n`);
+  out.push('');
+  out.push(`Global flags: ${dim('--token, --api, --output text|json, --help, --version')}`);
+  return out.join('\n') + '\n';
+}
+
+function printRoot() {
+  process.stderr.write(renderRoot(colorOn));
 }
