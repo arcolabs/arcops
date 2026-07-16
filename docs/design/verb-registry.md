@@ -157,7 +157,7 @@ A local-only verb such as `template edit` is represented in the registry with `l
 
 The server repo imports `VERBS` and `VerbScope` from `@arcolab/arcops/verbs` at build time.
 
-A generator (`server/src/lib/agent/verbs-to-mcp.ts`) produces:
+A generator (`server/src/lib/agent/verbs-to-mcp.ts`) is invoked only for remote verbs (`!verb.local`) and produces:
 
 ```ts
 {
@@ -167,7 +167,7 @@ A generator (`server/src/lib/agent/verbs-to-mcp.ts`) produces:
 }
 ```
 
-Args marked `cliOnly: true` are filtered out so that interactive guardrails (`--yes`, `--output`) never appear in MCP metadata.
+Local verbs are skipped entirely; args marked `cliOnly: true` are filtered out so that interactive guardrails (`--yes`, `--output`) never appear in MCP metadata.
 
 Scope filtering is performed at runtime using the same `scopeAllows` helper from S7:
 
@@ -246,9 +246,11 @@ The consistency test is the bridge; once Phase 3 removes legacy commands, it shr
 Server MCP migration is simpler because the current tool set is small:
 
 1. Add `@arcolab/arcops/verbs` as a dev dependency.
-2. Replace the hand-registered 5 tools with a loop over `VERBS` filtered by `scopeAllows(token.scope, verb.scope)`.
-3. Keep existing `tool-impl.ts` functions as the implementation layer; map verbs to implementations by `id`.
-4. Add a consistency test that every verb in the registry has an implementation mapping; fail the build if a verb is orphaned.
+2. Replace the hand-registered 5 tools with a loop over **remote** verbs only (`VERBS.filter(v => !v.local)`), filtered by `scopeAllows(token.scope, verb.scope)`.
+3. Keep existing `tool-impl.ts` functions as the implementation layer; map remote verbs to implementations by `id`.
+4. Add a consistency test that every **remote** verb in the registry has a server-side implementation mapping; fail the build if a remote verb is orphaned. Local verbs are intentionally not mapped on the server.
+
+Local verbs (`template:edit`, `auth login`, `auth logout`) remain in the registry so that the CLI command tree and `arcops verbs --json` can discover them, but they are never registered as MCP tools because they have no server-side behavior.
 
 ## 7. S7 api-key scope integration
 
@@ -259,6 +261,7 @@ The registry is the natural place where scope requirements meet the token system
 ```ts
 // server-side pseudo-code
 for (const verb of VERBS) {
+  if (verb.local) continue;                       // local verbs have no MCP counterpart
   if (scopeAllows(token.scope, verb.scope)) {
     registerMcpTool(verb);
   }
