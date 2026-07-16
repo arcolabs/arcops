@@ -153,6 +153,8 @@ export const COMMANDS = generateCommandDefs(VERBS, handlers);
 
 A local-only verb such as `template edit` is represented in the registry with `local: true` and no `http` field; the generator wires it to a local handler instead of an HTTP path. This satisfies the invariant in §4: local verbs have no server-side counterpart.
 
+**`scope` on a local verb is a non-enforced classification.** Local verbs never present an API key to a server, so no scope check ever executes for them; the field exists only for uniform help/docs rendering (`[read]` badges, SKILL.md tables) and for the schema to stay total. Enforcement of `scope` is defined exclusively for remote verbs (§7.1). The `template:edit` example in §9 carries `scope: 'read'` in exactly this documentary sense.
+
 ### 5.2 MCP tool surface
 
 The server repo imports `VERBS` and `VerbScope` from `@arcolab/arcops/verbs` at build time.
@@ -237,7 +239,7 @@ While legacy and generated catalogs coexist, a test file `src/verbs/registry-con
 4. Positional binding order matches.
 5. Every verb satisfies the local/remote invariant from §4.
 6. No `cliOnly` arg leaks into the MCP-facing arg list.
-7. Every verb’s `scope` has a server-side integration test in the server repo (read/write/send gate).
+7. Every **remote** verb’s `scope` has a server-side integration test in the server repo (read/write/send gate). Local verbs are exempt — their `scope` is a non-enforced classification (§5.1); they are covered instead by a registry-schema test asserting the §4 local/remote invariant (`local: true` ⇔ no `http`, never MCP-registered).
 
 The consistency test is the bridge; once Phase 3 removes legacy commands, it shrinks to a smaller schema-validation test.
 
@@ -358,7 +360,7 @@ When `arcops verbs --json` is called with a token, the CLI can optionally hit a 
 - [ ] `src/verbs/registry.ts` exists with `VerbDef` / `VerbArg` / `HttpMapping` / `VerbScope` types and a `VERBS` array.
 - [ ] `src/verbs/to-cli.ts` generates `CommandDef[]` from `VERBS`.
 - [ ] CLI still passes all existing tests after switching to generated command catalog.
-- [ ] Server MCP imports `@arcolab/arcops/verbs` and registers tools from `VERBS` filtered by token scope.
-- [ ] New command `arcops verbs --json` prints the registry.
-- [ ] Consistency test passes: every `VerbDef` has an implementation mapping on server and a handler on CLI.
+- [ ] Server MCP imports `@arcolab/arcops/verbs` and registers tools from `VERBS` filtered to remote verbs (`!verb.local`) and by token scope.
+- [ ] New command `arcops verbs --json` prints the registry (local verbs included).
+- [ ] Consistency test passes: every `VerbDef` has a handler on CLI; every **remote** verb additionally has a server implementation mapping and an MCP registration. Local verbs must satisfy the §4 invariant and must NOT appear in the MCP tool list.
 - [ ] PR diff contains only `src/verbs/*`, `src/commands/index.ts` wiring, `src/dispatch.ts` generator usage, and tests — no ad-hoc duplication of verb metadata elsewhere.
