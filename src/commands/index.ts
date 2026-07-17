@@ -23,6 +23,10 @@ import * as revenue from './revenue';
 import * as site from './site';
 import * as template from './template';
 import * as traffic from './traffic';
+import * as verbsCmd from './verbs';
+import type { VerbScope } from '../verbs/registry';
+import { VERBS } from '../verbs/registry';
+import { generateCommandDefs } from '../verbs/to-cli';
 
 export type CommandHandler = (args: Record<string, string>) => Promise<void> | void;
 
@@ -42,6 +46,10 @@ export type CommandDef = {
   positional?: PositionalSpec[];  // documented positional names (with optional type)
   examples?: string[];        // >=1 example invocation, without the `arcops ` prefix
   handler: CommandHandler;
+  // C2/KEH-150: scope badge source for --help (design §7.2). Present on
+  // generated commands (from the registry); legacy hand-written entries leave
+  // it unset. Non-enforced for local verbs (design §5.1).
+  scope?: VerbScope;
 };
 
 // Accessors that normalize bare-string specs to `{ name, type }` for renderers.
@@ -236,4 +244,49 @@ export const COMMANDS: CommandDef[] = [
     positional: ['name'],
     examples: ['template edit welcome'],
     handler: (a) => template.edit({ name: a.name }) },
+
+  // ── Capability discovery (C2/KEH-150, design §5.3) ──
+  { path: ['verbs'], summary: 'Print the verb registry (use --json for machine-readable catalog)',
+    flags: [{ name: '--json', type: 'bool' }, '--output'],
+    examples: ['verbs --json'],
+    handler: (a) => verbsCmd.verbs({ json: a.json, output: a.output }) },
 ];
+
+// ── C2/KEH-150 Phase 2 coexistence (design §6.2) ──────────────────────
+// The registry (`VERBS`) is the authoritative verb contract; the generator
+// turns it into a `CommandDef[]` that must be structurally equivalent to the
+// legacy hand-written `COMMANDS` above. registry-consistency.test.ts asserts
+// that equivalence. Both catalogs are mounted in dispatch with generated
+// entries taking precedence on path collisions; legacy display order is
+// preserved so root help is unchanged apart from the new scope badge.
+
+// Phase 2 handler bridge: generated commands reuse the exact legacy handler
+// closures (design §5.1 - handlers stay hand-written). This keeps runtime
+// behavior identical while the registry owns command structure. Phase 3 will
+// extract handlers into a dedicated module and drop legacy `COMMANDS`.
+export const HANDLERS: Record<string, CommandHandler> = {};
+for (const c of COMMANDS) HANDLERS[c.path.join(':')] = c.handler;
+
+export const GENERATED_COMMANDS: CommandDef[] = generateCommandDefs(VERBS, HANDLERS);
+
+// Merge generated + legacy. Generated wins on path collision; legacy order is
+// kept (so `arcops --help` reads in the same order); generated-only entries
+// (none today - `verbs` is in both) append at the end.
+export const DISPATCH_COMMANDS: CommandDef[] = mergeByPath(GENERATED_COMMANDS, COMMANDS);
+
+function mergeByPath(generated: CommandDef[], legacy: CommandDef[]): CommandDef[] {
+  const genByPath = new Map<string, CommandDef>();
+  for (const c of generated) genByPath.set(c.path.join('\0'), c);
+  const out: CommandDef[] = [];
+  const seen = new Set<string>();
+  for (const c of legacy) {
+    const key = c.path.join('\0');
+    out.push(genByPath.get(key) ?? c);   // generated takes precedence
+    seen.add(key);
+  }
+  for (const c of generated) {
+    const key = c.path.join('\0');
+    if (!seen.has(key)) { out.push(c); seen.add(key); }
+  }
+  return out;
+}

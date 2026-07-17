@@ -1,7 +1,7 @@
 // src/dispatch.ts
 import pc from 'picocolors';
 import {
-  COMMANDS, type CommandDef,
+  DISPATCH_COMMANDS, type CommandDef,
   flagName, flagType, positionalName, positionalType,
 } from './commands';
 import { error, info, emitError, colorOn } from './output';
@@ -61,7 +61,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
 function findCommand(tokens: string[]): { cmd?: CommandDef; depth: number } {
   let best: CommandDef | undefined;
   let depth = 0;
-  for (const c of COMMANDS) {
+  for (const c of DISPATCH_COMMANDS) {
     const n = c.path.length;
     if (tokens.length < n) continue;
     let match = true;
@@ -72,7 +72,7 @@ function findCommand(tokens: string[]): { cmd?: CommandDef; depth: number } {
 }
 
 function listChildren(prefix: string[]): CommandDef[] {
-  return COMMANDS.filter(c =>
+  return DISPATCH_COMMANDS.filter(c =>
     c.path.length > prefix.length &&
     prefix.every((t, i) => c.path[i] === t)
   );
@@ -159,7 +159,10 @@ export async function dispatch(argv: string[]): Promise<number> {
 export function renderVerbHelp(cmd: CommandDef): string {
   const out: string[] = [];
   const title = `arcops ${cmd.path.join(' ')}`;
-  out.push(`${title} - ${cmd.summary}`);
+  // C2/KEH-150 (design §7.2): annotate the required scope as a [read]/[write]/
+  // [send] badge. Generated commands carry scope; legacy entries do not.
+  const scopeTag = cmd.scope ? `  [${cmd.scope}]` : '';
+  out.push(`${title} - ${cmd.summary}${scopeTag}`);
   out.push('');
 
   const posPart = (cmd.positional ?? []).map((p) => `<${positionalName(p)}>`).join(' ');
@@ -224,8 +227,9 @@ function renderRoot(colored: boolean): string {
   out.push('');
   // Render from catalog (single source of truth).
   out.push(dim('Commands:'));
-  for (const c of COMMANDS) {
-    out.push(`  ${c.path.join(' ').padEnd(28)} ${dim(c.summary)}`);
+  for (const c of DISPATCH_COMMANDS) {
+    const badge = c.scope ? ` ${dim(`[${c.scope}]`)}` : '';
+    out.push(`  ${c.path.join(' ').padEnd(28)} ${dim(c.summary)}${badge}`);
   }
   out.push('');
   out.push(`Global flags: ${dim('--token, --api, --output text|json, --help, --version')}`);
