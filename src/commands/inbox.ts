@@ -644,19 +644,24 @@ export const draft = {
     const threadId = requireThreadId(args);
     const draftId = requireDraftId(args);
 
-    const { draft } = await apiGet<{ draft: { id: number; bodyText: string; createdAt: string } }>(
-      `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}`,
-      { api: auth.api, token: auth.token },
-    );
-
-    process.stderr.write(`\n─ Draft preview ─────────────────────────────────────\n`);
-    process.stderr.write(`Site:     ${site.domain}\n`);
-    process.stderr.write(`Draft:    #${draft.id} (${draft.createdAt})\n`);
-    process.stderr.write(`Body:     [${draft.bodyText.length} chars]\n`);
-    process.stderr.write(draft.bodyText.split('\n').map((l) => '          ' + l).join('\n') + '\n');
-    process.stderr.write(`─────────────────────────────────────────────────────\n`);
-
+    // The preview GET is interactive UX only. On the --yes (agent) path skip
+    // it entirely: the drafts read route filters out sent drafts, so a RETRY
+    // of an already-sent draft would 404 at the preview and never reach the
+    // send endpoint's idempotency replay (second production-e2e bug). The send
+    // endpoint is the sole authority on draft state.
     if (args.yes !== 'true') {
+      const { draft } = await apiGet<{ draft: { id: number; bodyText: string; createdAt: string } }>(
+        `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}`,
+        { api: auth.api, token: auth.token },
+      );
+
+      process.stderr.write(`\n─ Draft preview ─────────────────────────────────────\n`);
+      process.stderr.write(`Site:     ${site.domain}\n`);
+      process.stderr.write(`Draft:    #${draft.id} (${draft.createdAt})\n`);
+      process.stderr.write(`Body:     [${draft.bodyText.length} chars]\n`);
+      process.stderr.write(draft.bodyText.split('\n').map((l) => '          ' + l).join('\n') + '\n');
+      process.stderr.write(`─────────────────────────────────────────────────────\n`);
+
       const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm send: `);
       if (!ok) { error('Send aborted.'); process.exit(1); }
     }
