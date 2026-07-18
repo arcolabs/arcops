@@ -8,10 +8,10 @@ Single binary, ~115 KB, one runtime dep (`picocolors`). Built for both humans (T
 
 ```bash
 npm install -g @arcolab/arcops
-arcops auth login --token ts_…
+arcops auth login --token <api-key>
 ```
 
-Requires Node 20+. Tokens (`ts_…`) are minted server-side at one of three scopes - `read`, `write`, `send` - and never created by the CLI. The default API is `https://arcops.cc` (override with `--api` or `ARCOPS_API`).
+Requires Node 20+. API keys are minted server-side at one of three scopes - `read`, `write`, `send` - and never created by the CLI. As of the S7 migration, newly issued keys are org-scoped Better Auth API keys; legacy `ts_…` tokens are still accepted via dual-read. The default API is `https://arcops.cc` (override with `--api` or `ARCOPS_API`).
 
 ## Agent reference
 

@@ -20,7 +20,7 @@ Requires Node 20+. The published binary is a single ~115 KB ESM bundle with one 
 
 ## Authenticate
 
-Tokens are minted server-side; the CLI never creates them. A token looks like `ts_…` and is scoped to an organization. The `ts_` prefix is a server-side contract and is unchanged across the Better Auth api-key migration (org-scoped keys are still read with `ts_` compatibility).
+API keys are minted server-side; the CLI never creates them. A key is scoped to an organization at one of three scope tiers. As of the S7 migration the server dual-reads the `Authorization: Bearer <key>` header: a `ts_`-prefixed value is a **legacy token** (verified by the pre-S7 path), any other value is a **newly issued org-scoped Better Auth API key** (minted at `/api/auth/api-keys`, verified via Better Auth's `verifyApiKey`). The CLI itself is prefix-agnostic - it stores and sends the key verbatim, and the server discriminates by the `ts_` prefix. Do not assume a prefix for a newly minted key; copy the plaintext from the server exactly once when it is created (legacy `ts_…` tokens are still accepted via dual-read but are no longer issued).
 
 Three scope tiers (`read` < `write` < `send`):
 
@@ -33,10 +33,10 @@ Three scope tiers (`read` < `write` < `send`):
 A higher scope implies every lower scope. The server enforces; the CLI does not pre-filter - a `403 Insufficient scope` comes back as a structured error (see [Output contract](#output-contract)).
 
 ```bash
-arcops auth login --token ts_xxxxxxxxxx
+arcops auth login --token <api-key>
 ```
 
-Saves `{ token, api }` to `~/.arcops/credentials.json` (mode `0600`) and sanity-checks the token against `/api/sites` - invalid tokens fail fast.
+Saves `{ token, api }` to `~/.arcops/credentials.json` (mode `0600`) and sanity-checks the key against `/api/sites` - invalid keys fail fast (rendered via the standard error envelope under `--output json`).
 
 ```bash
 arcops auth status            # human summary
@@ -47,7 +47,7 @@ arcops auth logout
 API URL overrides (default is `https://arcops.cc`):
 
 ```bash
-arcops auth login --token ts_xxx --api https://arcops.cc   # persisted to credentials
+arcops auth login --token <api-key> --api https://arcops.cc   # persisted to credentials
 ARCOPS_API=https://arcops.cc arcops site ls                # per-command override
 ```
 
@@ -58,11 +58,11 @@ ARCOPS_API=https://arcops.cc arcops site ls                # per-command overrid
 The CLI is the read/send surface; provisioning is server-side. A brand-new organization goes from zero to first data in four steps:
 
 1. **Provision the org and a site (server-side).** An admin creates the organization and adds a site (domain) in the Arcops server. There is no CLI verb to create an org or connect a site today - see the server repo (`arcolabs/arcops-server`).
-2. **Mint an org-scoped API key (server-side).** The admin mints a `ts_…` token at one of `read` / `write` / `send` (Better Auth api-key; `ts_` prefix is the stable server-side contract). The CLI never creates tokens.
+2. **Mint an org-scoped API key (server-side).** The admin mints a Better Auth API key at one of `read` / `write` / `send` via `/api/auth/api-keys` (org-scoped; optionally constrained to a single site). The plaintext key is shown once - copy it exactly, do not assume a prefix. Legacy `ts_…` tokens are still accepted via dual-read but are no longer issued. The CLI never creates keys.
 3. **Install + authenticate (CLI).**
    ```bash
    npm install -g @arcolab/arcops
-   arcops auth login --token ts_…        # saved to ~/.arcops/credentials.json
+   arcops auth login --token <api-key>   # saved to ~/.arcops/credentials.json
    arcops auth status --output json      # { authenticated, api, site_count }
    ```
 4. **See first data.**
@@ -289,7 +289,7 @@ arcops inbox reply example.com 123 --template welcome --yes
 
 ## MCP
 
-Arcops also exposes an MCP server at `https://arcops.cc/api/mcp`, authenticated with the same org API key (`Bearer ts_…`). As of today it registers **5 tools**:
+Arcops also exposes an MCP server at `https://arcops.cc/api/mcp`, authenticated with the same org API key (`Bearer <api-key>`). As of today it registers **5 tools**:
 
 - `list_sites` - list every site in the portfolio.
 - `get_site_context` - read a site's accumulated Context Tree.
@@ -306,11 +306,11 @@ From a clean environment, the following should all work without human interactio
 ```bash
 npm install -g @arcolab/arcops
 arcops --version
-arcops auth login --token ts_xxx
+arcops auth login --token <api-key>
 arcops auth status --output json
 arcops site ls --output json
 arcops revenue example.com --days 30 --output json
 arcops verbs --json
 ```
 
-Replace `ts_xxx` and `example.com` with real values; `arcops revenue` will return an empty shape if the site has no Stripe data yet, but a `0` exit and valid JSON prove the auth + request path is working.
+Replace `<api-key>` and `example.com` with real values; `arcops revenue` will return an empty shape if the site has no Stripe data yet, but a `0` exit and valid JSON prove the auth + request path is working.
