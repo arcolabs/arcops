@@ -14,6 +14,7 @@ import * as auth from './auth';
 import * as campaign from './campaign';
 import * as customer from './customer';
 import * as directory from './directory';
+import * as events from './events';
 import * as funnel from './funnel';
 import * as gsc from './gsc';
 import * as inbox from './inbox';
@@ -24,6 +25,7 @@ import * as site from './site';
 import * as template from './template';
 import * as traffic from './traffic';
 import * as verbsCmd from './verbs';
+import * as webhook from './webhook';
 import type { VerbScope } from '../verbs/registry';
 import { VERBS } from '../verbs/registry';
 import { generateCommandDefs } from '../verbs/to-cli';
@@ -230,6 +232,50 @@ export const COMMANDS: CommandDef[] = [
     positional: ['site', { name: 'thread-id', type: 'number' }, { name: 'draft-id', type: 'number' }],
     examples: ['inbox draft rm acme.com 123 5'],
     handler: (a) => inbox.draft.rm(a) },
+
+  // ── Events & webhooks (S8d-2 product surface) ──
+  { path: ['webhook', 'ls'], summary: 'List webhook endpoints',
+    flags: ['--output'],
+    examples: ['webhook ls'],
+    handler: (a) => webhook.ls(a) },
+  { path: ['webhook', 'create'], summary: 'Create a webhook endpoint (signing secret shown once)',
+    flags: ['--name', '--url', { name: '--event', type: 'string[]' }, '--site-filter', '--output'],
+    examples: ['webhook create --name my-agent --url https://agent.example.com/arcops --event "inbox.*"'],
+    handler: (a) => webhook.create(a) },
+  { path: ['webhook', 'update'], summary: 'Update a webhook endpoint (name/url/events/status/secret rotation)',
+    positional: ['endpoint'],
+    flags: ['--name', '--url', { name: '--event', type: 'string[]' }, '--site-filter', '--status', { name: '--rotate-secret', type: 'bool' }, '--output'],
+    examples: ['webhook update we_abc --status active', 'webhook update we_abc --rotate-secret'],
+    handler: (a) => webhook.update(a) },
+  { path: ['webhook', 'rm'], summary: 'Delete a webhook endpoint',
+    positional: ['endpoint'],
+    flags: ['--output'],
+    examples: ['webhook rm we_abc'],
+    handler: (a) => webhook.rm(a) },
+  { path: ['webhook', 'test'], summary: 'Fire a real ping event at an endpoint (exits non-zero on failure)',
+    positional: ['endpoint'],
+    flags: ['--output'],
+    examples: ['webhook test we_abc'],
+    handler: (a) => webhook.test(a) },
+  { path: ['webhook', 'deliveries'], summary: 'Per-endpoint delivery log (cursor-paginated via --cursor)',
+    positional: ['endpoint'],
+    flags: ['--status', { name: '--limit', type: 'number' }, '--cursor', '--output'],
+    examples: ['webhook deliveries we_abc --status dead'],
+    handler: (a) => webhook.deliveries(a) },
+  { path: ['events', 'ls'], summary: 'List outbound events (cursor-paginated via --cursor)',
+    flags: ['--type', { name: '--site', type: 'number' }, '--since', { name: '--limit', type: 'number' }, '--cursor', '--output'],
+    examples: ['events ls --type inbox.message.received --limit 20'],
+    handler: (a) => events.ls(a) },
+  { path: ['events', 'show'], summary: 'Show one event with its deliveries',
+    positional: ['event'],
+    flags: ['--output'],
+    examples: ['events show evt_abc'],
+    handler: (a) => events.show(a) },
+  { path: ['events', 'replay'], summary: 'Re-arm a failed/dead delivery (runner picks it up next tick)',
+    positional: [{ name: 'delivery-id', type: 'number' }],
+    flags: ['--output'],
+    examples: ['events replay 1234'],
+    handler: (a) => events.replay(a) },
 
   // ── Templates (~/.arcops/templates/<name>.md) ──
   { path: ['template', 'ls'], summary: 'List reply templates in ~/.arcops/templates',
