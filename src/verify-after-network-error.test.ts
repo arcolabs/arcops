@@ -222,10 +222,12 @@ describe('network-failure verify-after-send (KEH-164): cold send', () => {
             nextCursor: null,
           })
         : undefined as unknown as Response,
-      // thread detail (probe step 2)
+      // thread detail (probe step 2). participant_emails mirrors the real
+      // server shape for a cold send: {from} ∪ to ∪ cc (here support@sunor.cc
+      // + a@b.com). The probe strips the from address and exact-matches to∪cc.
       (req, url) => url.pathname === '/api/sites/8/inbox/threads/42' && req.method === 'GET'
         ? json({
-            thread: { id: 42, subject: 't', participant_emails: ['a@b.com'] },
+            thread: { id: 42, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
             messages: [{ id: 99, direction: 'outbound', received_at: new Date().toISOString() }],
           })
         : undefined as unknown as Response,
@@ -249,6 +251,98 @@ describe('network-failure verify-after-send (KEH-164): cold send', () => {
       expect(res.code).toBe(0);
       expect(res.stderr).toContain('verify confirms it landed on thread #42 as message #99');
       expect(res.stderr).toContain('Email sent');
+    } finally {
+      await proxy.close();
+      await stop();
+    }
+  });
+
+  test('network error, send NOT processed, pre-existing same-subject/to thread with recent outbound -> failure + safe-to-retry (no false positive)', async () => {
+    // Regression for KEH-164 gate round 1: the old probe matched ANY recent
+    // thread with the same subject + a superset of `to` and a fresh outbound,
+    // so a pre-existing thread (from an earlier send) with a recent outbound
+    // made an unprocessed send falsely report success (exit 0). The pre-send
+    // thread-id snapshot must exclude pre-existing threads so only a thread
+    // THIS send creates can be confirmed.
+    const recentIso = new Date().toISOString();
+    const { port, stop } = await mockServer([
+      SITES_ROUTE,
+      // threads list: a pre-existing thread 7 is always present, so BOTH the
+      // pre-send snapshot and the post-error probe see it. The send below is
+      // NOT processed, so no new thread appears.
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
+        ? json({ threads: [{ id: 7, subject: 't', last_message_at: recentIso }], counts: {}, nextCursor: null })
+        : undefined as unknown as Response,
+      // thread 7: same subject + same `to` as our send, with a fresh outbound
+      // from an earlier send - the exact false-positive bait.
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/7' && req.method === 'GET'
+        ? json({
+            thread: { id: 7, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
+            messages: [{ id: 50, direction: 'outbound', received_at: recentIso }],
+          })
+        : undefined as unknown as Response,
+      // No send POST route + onKill no-op: the proxy kills the connection
+      // before the server processes anything, so the send never lands.
+    ]);
+    const proxy = await startKillingProxy(port, {
+      killRequestLine: 'POST /api/sites/8/inbox/send',
+      onKill: () => {},
+    });
+    try {
+      const res = await runCli([
+        '--api', proxy.base, 'inbox', 'send', 'sunor.cc',
+        '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes',
+      ]);
+      expect(res.code).not.toBe(0);
+      expect(res.stderr).toContain('NOT sent');
+      expect(res.stderr).toContain('Safe to retry');
+      expect(res.stderr).toContain('idempotency key will replay');
+    } finally {
+      await proxy.close();
+      await stop();
+    }
+  });
+
+  test('network error, a new thread appears with a mismatched recipient set (missing cc) -> failure + safe-to-retry (no false positive)', async () => {
+    // Regression for KEH-164 gate round 1: the old probe matched `to` as a
+    // subset of participants (ignoring cc), so a thread to a subset of the
+    // recipients could be misclaimed as this send. The probe now requires an
+    // EXACT recipient set (to ∪ cc). Here a thread appears in the probe
+    // window (a concurrent send to a@b.com only) while our send (to a@b.com
+    // + cc c@d.com) is lost in transit - it must NOT be reported as our send.
+    const state = { appeared: false };
+    const recentIso = new Date().toISOString();
+    const { port, stop } = await mockServer([
+      SITES_ROUTE,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
+        ? json({
+            threads: state.appeared ? [{ id: 42, subject: 't', last_message_at: recentIso }] : [],
+            counts: {}, nextCursor: null,
+          })
+        : undefined as unknown as Response,
+      // thread 42: subject matches, but participants are a SUBSET of our send
+      // (missing cc c@d.com) - a different send. Exact-match must reject it.
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/42' && req.method === 'GET'
+        ? json({
+            thread: { id: 42, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
+            messages: [{ id: 99, direction: 'outbound', received_at: recentIso }],
+          })
+        : undefined as unknown as Response,
+    ]);
+    const proxy = await startKillingProxy(port, {
+      killRequestLine: 'POST /api/sites/8/inbox/send',
+      // A concurrent thread 42 appears in the probe window; our own send is
+      // killed in transit and never processed.
+      onKill: () => { state.appeared = true; },
+    });
+    try {
+      const res = await runCli([
+        '--api', proxy.base, 'inbox', 'send', 'sunor.cc',
+        '--to', 'a@b.com', '--cc', 'c@d.com', '--subject', 't', '--body', 'hi', '--yes',
+      ]);
+      expect(res.code).not.toBe(0);
+      expect(res.stderr).toContain('NOT sent');
+      expect(res.stderr).toContain('Safe to retry');
     } finally {
       await proxy.close();
       await stop();

@@ -157,29 +157,92 @@ async function probeThreadForNewOutbound(
   return fresh.length > 0 ? { threadId, messageId: fresh[fresh.length - 1].id } : null;
 }
 
+// How many recent threads the cold-send probe inspects (and the pre-send
+// snapshot records). A thread our send just created sits at the top of the
+// list (last_message_at = now), so a small window is enough; the snapshot uses
+// the same bound so every pre-existing thread the probe can see was already
+// captured pre-send (no false "new" thread).
+const PROBE_RECENT_THREAD_LIMIT = 5;
+
+// Best-effort point-in-time snapshot of recent thread ids BEFORE a cold send.
+// A post-error probe uses it to tell the thread THIS send created (a brand-new
+// id) from pre-existing threads that merely share subject/recipients - the
+// cold-send false positive an operator nearly blind-retried on (KEH-164 gate
+// round 1). Returns null when the snapshot GET itself fails: the caller then
+// cannot positively identify a new thread and reports "status unknown" rather
+// than guessing.
+async function snapshotRecentThreadIds(
+  auth: { api: string; token: string },
+  siteId: number,
+): Promise<Set<number> | null> {
+  try {
+    const list = await apiGet<{ threads: Array<{ id: number }> }>(
+      `/api/sites/${siteId}/inbox/threads`,
+      { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
+    );
+    return new Set(list.threads.map((t) => t.id));
+  } catch {
+    return null;
+  }
+}
+
 // Cold `send` creates a NEW thread, so on a network error the threadId is
-// unknown. Scan the most recent threads (a thread our send just created sits
-// at the top) for one matching subject + recipients with a fresh outbound.
+// unknown. The probe re-lists recent threads and positively identifies THIS
+// send's thread as the one that (a) did NOT exist pre-send (`preSendThreadIds`
+// snapshot), (b) has the exact same subject, (c) has the EXACT recipient set
+// (to ∪ cc, the from address excluded on both sides - the server stores
+// participant_emails as {from} ∪ to ∪ cc), and (d) carries an outbound. Only a
+// thread satisfying ALL four is reported as landed; anything else falls through
+// to "not landed, safe to retry". This is clock-skew-free (it keys on thread
+// id existence, not timestamps) and rejects both pre-existing same-subject
+// threads and new threads with a mismatched recipient set (e.g. missing cc).
 async function probeRecentThreadsForSend(
   auth: { api: string; token: string },
   siteId: number,
-  opts: { subject: string; to: string[]; sinceMs: number },
+  opts: {
+    subject: string;
+    to: string[];
+    cc: string[];
+    fromEmail: string;
+    preSendThreadIds: Set<number>;
+  },
 ): Promise<OutboundHit | null> {
   const list = await apiGet<{ threads: Array<{ id: number }> }>(
     `/api/sites/${siteId}/inbox/threads`,
-    { api: auth.api, token: auth.token, query: { limit: 5 } },
+    { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
   );
-  const cutoff = opts.sinceMs - CLOCK_SKEW_ALLOWANCE_MS;
-  for (const t of list.threads.slice(0, 5)) {
+  // Exact recipient set the operator addressed this send to (to + cc, deduped,
+  // own from address stripped - mirroring the server's finalTo/finalCc).
+  const fromEmail = opts.fromEmail.toLowerCase();
+  const expectedRecipients = new Set(
+    [...opts.to, ...opts.cc].map((e) => e.toLowerCase()).filter((e) => e !== fromEmail),
+  );
+  for (const t of list.threads.slice(0, PROBE_RECENT_THREAD_LIMIT)) {
+    // (a) only a thread that did NOT exist pre-send can be this send's thread.
+    if (opts.preSendThreadIds.has(t.id)) continue;
     const detail = await apiGet<{
       thread: { subject?: string | null; participant_emails?: string[] };
-      messages: Array<{ id: number; direction: string; received_at?: string }>;
+      messages: Array<{ id: number; direction: string }>;
     }>(`/api/sites/${siteId}/inbox/threads/${t.id}`, { api: auth.api, token: auth.token });
+    // (b) exact subject.
     if ((detail.thread.subject ?? '') !== opts.subject) continue;
-    const participants = new Set((detail.thread.participant_emails ?? []).map((e) => e.toLowerCase()));
-    if (!opts.to.every((e) => participants.has(e))) continue;
-    const fresh = detail.messages.filter((m) => isFreshOutbound(m, cutoff));
-    if (fresh.length > 0) return { threadId: t.id, messageId: fresh[fresh.length - 1].id };
+    // (c) exact recipient set: thread participants minus our from address must
+    // equal to ∪ cc exactly. A subset (missing cc) or superset (a different
+    // send to extra recipients) is NOT this send.
+    const threadRecipients = new Set(
+      (detail.thread.participant_emails ?? [])
+        .map((e) => e.toLowerCase())
+        .filter((e) => e !== fromEmail),
+    );
+    if (threadRecipients.size !== expectedRecipients.size) continue;
+    let recipientsMatch = true;
+    for (const e of expectedRecipients) {
+      if (!threadRecipients.has(e)) { recipientsMatch = false; break; }
+    }
+    if (!recipientsMatch) continue;
+    // (d) the newly created thread's outbound is this send's outbound.
+    const outbound = detail.messages.find((m) => m.direction === 'outbound');
+    if (outbound) return { threadId: t.id, messageId: outbound.id };
   }
   return null;
 }
@@ -643,6 +706,12 @@ export async function send(args: {
     ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal }, attachPaths);
 
   const start = Date.now();
+  // KEH-164: snapshot recent thread ids before the send so a network-error
+  // probe can identify the NEW thread this send creates (vs a pre-existing one
+  // sharing subject/recipients). Best-effort; null => probe can't positively
+  // confirm => "status unknown" rather than a guessed success.
+  const preSendThreadIds = await snapshotRecentThreadIds(auth, site.id);
+  const fromEmail = `${fromLocal}@${site.domain}`;
   let result: { threadId: number; messageId: number };
   try {
     result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
@@ -679,11 +748,24 @@ export async function send(args: {
   } catch (e) {
     // KEH-164: lost response (network) - the server may have created the
     // thread + outbound. The threadId is unknown here, so probe the recent
-    // threads list by subject + recipients before reporting anything.
+    // threads list and positively identify THIS send's new thread (by
+    // pre-send snapshot + exact subject + exact recipient set) before
+    // reporting anything.
     if (!(e instanceof ApiError && e.kind === 'network')) throw e;
+    if (preSendThreadIds === null) {
+      throw new ApiError(0,
+        `Send request failed (network): ${e.message}. ` +
+        `Pre-send thread snapshot was unavailable, so the new thread cannot be ` +
+        `positively identified. Send status unknown - confirm manually with: ` +
+        `arcops inbox ls ${site.domain}`,
+        { kind: 'network' },
+      );
+    }
     const hit = await verifyAfterSendNetworkError({
       networkError: e,
-      probe: () => probeRecentThreadsForSend(auth, site.id, { subject, to: toList, sinceMs: start }),
+      probe: () => probeRecentThreadsForSend(auth, site.id, {
+        subject, to: toList, cc: ccList, fromEmail, preSendThreadIds,
+      }),
       manualCheck: `arcops inbox ls ${site.domain}`,
     });
     runSuccess({
