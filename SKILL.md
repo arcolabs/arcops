@@ -261,6 +261,12 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | --- | --- | --- | --- |
 | `arcops verbs` | `read` | local | Print the verb registry (use --json for machine-readable catalog) |
 
+### Audit
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops audit ls` | `read` | remote | Show send/write scope operations for a site (what agents did) |
+
 <!-- END VERB REFERENCE -->
 
 ## Capability discovery
