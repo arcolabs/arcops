@@ -4,10 +4,10 @@
 //   assign / unassign updates assigneeEmail (independent axis from status).
 
 import { resolveAuth } from '../config';
-import { apiCall, apiGet, apiPost, apiDelete } from '../api';
+import { apiCall, apiGet, apiPost, apiDelete, ApiError } from '../api';
 import {
   detectOutputFormat, printJson, printTable,
-  error, success, info, withSpinner, runSuccess,
+  error, success, info, warn, withSpinner, runSuccess,
 } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 import { openEditor } from '../lib/editor';
@@ -110,6 +110,175 @@ async function verifyOutboundLanded(
       `Re-check with: arcops inbox show <site> ${threadId}`,
     );
   }
+}
+
+// ─── Network-failure recovery (KEH-164) ────────────────────────────────
+// When the send request throws a kind 'network' ApiError (fetch failed - the
+// response was lost in transit, e.g. WSL/Clash blip), the server may already
+// have processed the send. Reporting a bare failure invites a blind retry, so
+// before reporting anything we re-query and check whether a fresh outbound
+// actually landed. ONLY kind 'network' gets this treatment: 'timeout' means
+// the CLI aborted the request itself, and 'api' errors carry a definitive
+// server verdict - both keep their original behavior.
+
+// Client and server clocks can drift; an outbound counts as "fresh" if it was
+// recorded up to this long before the send attempt started.
+const CLOCK_SKEW_ALLOWANCE_MS = 120_000;
+
+type OutboundHit = { threadId: number; messageId: number };
+
+function isFreshOutbound(
+  m: { direction: string; received_at?: string },
+  cutoffMs: number,
+): boolean {
+  if (m.direction !== 'outbound') return false;
+  if (!m.received_at) return true; // no timestamp -> don't disqualify
+  const t = Date.parse(m.received_at);
+  return Number.isNaN(t) || t >= cutoffMs;
+}
+
+// Probe a known thread (reply / draft send) for an outbound that appeared
+// around the send attempt. `preSendOutboundIds` (when the caller already
+// fetched the thread pre-send) additionally excludes pre-existing outbounds.
+async function probeThreadForNewOutbound(
+  auth: { api: string; token: string },
+  siteId: number,
+  threadId: number,
+  opts: { preSendOutboundIds?: Set<number>; sinceMs: number },
+): Promise<OutboundHit | null> {
+  const data = await apiGet<{ messages: Array<{ id: number; direction: string; received_at?: string }> }>(
+    `/api/sites/${siteId}/inbox/threads/${threadId}`,
+    { api: auth.api, token: auth.token },
+  );
+  const cutoff = opts.sinceMs - CLOCK_SKEW_ALLOWANCE_MS;
+  const fresh = data.messages.filter((m) =>
+    !opts.preSendOutboundIds?.has(m.id) && isFreshOutbound(m, cutoff),
+  );
+  return fresh.length > 0 ? { threadId, messageId: fresh[fresh.length - 1].id } : null;
+}
+
+// How many recent threads the cold-send probe inspects (and the pre-send
+// snapshot records). A thread our send just created sits at the top of the
+// list (last_message_at = now), so a small window is enough; the snapshot uses
+// the same bound so every pre-existing thread the probe can see was already
+// captured pre-send (no false "new" thread).
+const PROBE_RECENT_THREAD_LIMIT = 5;
+
+// Best-effort point-in-time snapshot of recent thread ids BEFORE a cold send.
+// A post-error probe uses it to tell the thread THIS send created (a brand-new
+// id) from pre-existing threads that merely share subject/recipients - the
+// cold-send false positive an operator nearly blind-retried on (KEH-164 gate
+// round 1). Returns null when the snapshot GET itself fails: the caller then
+// cannot positively identify a new thread and reports "status unknown" rather
+// than guessing.
+async function snapshotRecentThreadIds(
+  auth: { api: string; token: string },
+  siteId: number,
+): Promise<Set<number> | null> {
+  try {
+    const list = await apiGet<{ threads: Array<{ id: number }> }>(
+      `/api/sites/${siteId}/inbox/threads`,
+      { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
+    );
+    return new Set(list.threads.map((t) => t.id));
+  } catch {
+    return null;
+  }
+}
+
+// Cold `send` creates a NEW thread, so on a network error the threadId is
+// unknown. The probe re-lists recent threads and positively identifies THIS
+// send's thread as the one that (a) did NOT exist pre-send (`preSendThreadIds`
+// snapshot), (b) has the exact same subject, (c) has the EXACT recipient set
+// (to ∪ cc, the from address excluded on both sides - the server stores
+// participant_emails as {from} ∪ to ∪ cc), and (d) carries an outbound. Only a
+// thread satisfying ALL four is reported as landed; anything else falls through
+// to "not landed, safe to retry". This is clock-skew-free (it keys on thread
+// id existence, not timestamps) and rejects both pre-existing same-subject
+// threads and new threads with a mismatched recipient set (e.g. missing cc).
+async function probeRecentThreadsForSend(
+  auth: { api: string; token: string },
+  siteId: number,
+  opts: {
+    subject: string;
+    to: string[];
+    cc: string[];
+    fromEmail: string;
+    preSendThreadIds: Set<number>;
+  },
+): Promise<OutboundHit | null> {
+  const list = await apiGet<{ threads: Array<{ id: number }> }>(
+    `/api/sites/${siteId}/inbox/threads`,
+    { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
+  );
+  // Exact recipient set the operator addressed this send to (to + cc, deduped,
+  // own from address stripped - mirroring the server's finalTo/finalCc).
+  const fromEmail = opts.fromEmail.toLowerCase();
+  const expectedRecipients = new Set(
+    [...opts.to, ...opts.cc].map((e) => e.toLowerCase()).filter((e) => e !== fromEmail),
+  );
+  for (const t of list.threads.slice(0, PROBE_RECENT_THREAD_LIMIT)) {
+    // (a) only a thread that did NOT exist pre-send can be this send's thread.
+    if (opts.preSendThreadIds.has(t.id)) continue;
+    const detail = await apiGet<{
+      thread: { subject?: string | null; participant_emails?: string[] };
+      messages: Array<{ id: number; direction: string }>;
+    }>(`/api/sites/${siteId}/inbox/threads/${t.id}`, { api: auth.api, token: auth.token });
+    // (b) exact subject.
+    if ((detail.thread.subject ?? '') !== opts.subject) continue;
+    // (c) exact recipient set: thread participants minus our from address must
+    // equal to ∪ cc exactly. A subset (missing cc) or superset (a different
+    // send to extra recipients) is NOT this send.
+    const threadRecipients = new Set(
+      (detail.thread.participant_emails ?? [])
+        .map((e) => e.toLowerCase())
+        .filter((e) => e !== fromEmail),
+    );
+    if (threadRecipients.size !== expectedRecipients.size) continue;
+    let recipientsMatch = true;
+    for (const e of expectedRecipients) {
+      if (!threadRecipients.has(e)) { recipientsMatch = false; break; }
+    }
+    if (!recipientsMatch) continue;
+    // (d) the newly created thread's outbound is this send's outbound.
+    const outbound = detail.messages.find((m) => m.direction === 'outbound');
+    if (outbound) return { threadId: t.id, messageId: outbound.id };
+  }
+  return null;
+}
+
+// Shared verdict for the three send call sites. Returns the probe hit when
+// the outbound is confirmed landed (caller reports success, exit 0). Throws
+// otherwise: not-landed -> failure with the safe-to-retry hint (the stable
+// idempotency key replays server-side, no duplicate); probe failure -> send
+// status unknown with a manual-check command. Thrown errors surface through
+// dispatch's emitError (JSON envelope in pipe mode, exit 1).
+async function verifyAfterSendNetworkError(opts: {
+  networkError: ApiError;
+  probe: () => Promise<OutboundHit | null>;
+  manualCheck: string; // e.g. `arcops inbox show <site> <thread>`
+}): Promise<OutboundHit> {
+  warn(`Send request failed (network): ${opts.networkError.message}`);
+  info('Verifying whether the outbound actually landed before reporting failure…');
+  let hit: OutboundHit | null;
+  try {
+    hit = await opts.probe();
+  } catch (e) {
+    throw new ApiError(0,
+      `Send request failed (network) and the verify query also failed (${(e as Error).message}). ` +
+      `Send status unknown - confirm manually with: ${opts.manualCheck}`,
+      { kind: 'network' },
+    );
+  }
+  if (!hit) {
+    throw new ApiError(0,
+      `Send request failed (network): ${opts.networkError.message}. ` +
+      `Verify found no new outbound - the message was NOT sent. ` +
+      `Safe to retry: the idempotency key will replay, no duplicate send.`,
+      { kind: 'network' },
+    );
+  }
+  return hit;
 }
 
 // Resolve reply body from any of: --body, --body-file, --template, $EDITOR.
@@ -402,33 +571,56 @@ export async function reply(args: {
   const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
 
   const start = Date.now();
+  // Snapshot pre-send outbound ids (free - the preview GET already ran) so a
+  // network-error probe can tell a freshly landed reply from old outbounds.
+  const preSendOutboundIds = new Set(
+    data.messages.filter((m) => m.direction === 'outbound').map((m) => m.id),
+  );
   // Capture the server-returned messageId so verify-after-send confirms THAT
   // message exists on the thread. This works for both a fresh send (new
   // messageId) AND an idempotent replay (server returns the original messageId
   // without creating a new outbound). The old pre-send-snapshot approach
   // falsely reported failure on replay because no NEW outbound appeared.
-  const result = await withSpinner(`Sending reply to ${recipients}…`, async () => {
-    if (attachPaths.length === 0) {
-      return apiPost<{ messageId: number }>(
+  let result: { messageId: number };
+  try {
+    result = await withSpinner(`Sending reply to ${recipients}…`, async () => {
+      if (attachPaths.length === 0) {
+        return apiPost<{ messageId: number }>(
+          `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
+          { api: auth.api, token: auth.token, idempotencyKey, body: { body } },
+        );
+      }
+      const fd = new FormData();
+      fd.append('body', body);
+      for (const p of attachPaths) {
+        const buf = readFileSync(p);
+        fd.append(
+          'attachments',
+          new Blob([buf], { type: mimeForFile(p) }),
+          basename(p),
+        );
+      }
+      return apiCall<{ messageId: number }>(
         `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-        { api: auth.api, token: auth.token, idempotencyKey, body: { body } },
+        { api: auth.api, token: auth.token, idempotencyKey, method: 'POST', body: fd },
       );
-    }
-    const fd = new FormData();
-    fd.append('body', body);
-    for (const p of attachPaths) {
-      const buf = readFileSync(p);
-      fd.append(
-        'attachments',
-        new Blob([buf], { type: mimeForFile(p) }),
-        basename(p),
-      );
-    }
-    return apiCall<{ messageId: number }>(
-      `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-      { api: auth.api, token: auth.token, idempotencyKey, method: 'POST', body: fd },
-    );
-  });
+    });
+  } catch (e) {
+    // KEH-164: a lost response (network) is not proof of failure - the server
+    // may have processed the reply. Verify before reporting anything.
+    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
+    const hit = await verifyAfterSendNetworkError({
+      networkError: e,
+      probe: () => probeThreadForNewOutbound(auth, site.id, threadId, { preSendOutboundIds, sinceMs: start }),
+      manualCheck: `arcops inbox show ${site.domain} ${threadId}`,
+    });
+    runSuccess({
+      title: 'Reply sent',
+      elapsedMs: Date.now() - start,
+      extra: `send request failed (network), but verify confirms it landed as message #${hit.messageId}`,
+    });
+    return;
+  }
   await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
   runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
 }
@@ -514,37 +706,77 @@ export async function send(args: {
     ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal }, attachPaths);
 
   const start = Date.now();
-  const result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
-    if (attachPaths.length === 0) {
+  // KEH-164: snapshot recent thread ids before the send so a network-error
+  // probe can identify the NEW thread this send creates (vs a pre-existing one
+  // sharing subject/recipients). Best-effort; null => probe can't positively
+  // confirm => "status unknown" rather than a guessed success.
+  const preSendThreadIds = await snapshotRecentThreadIds(auth, site.id);
+  const fromEmail = `${fromLocal}@${site.domain}`;
+  let result: { threadId: number; messageId: number };
+  try {
+    result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
+      if (attachPaths.length === 0) {
+        return apiPost<{ threadId: number; messageId: number }>(
+          `/api/sites/${site.id}/inbox/send`,
+          {
+            api: auth.api, token: auth.token, idempotencyKey,
+            body: {
+              to: toList,
+              ...(ccList.length > 0 ? { cc: ccList } : {}),
+              subject,
+              body,
+              from: fromLocal,
+            },
+          },
+        );
+      }
+      // Multipart: comma-joined email lists match the server's splitEmails parse.
+      const fd = new FormData();
+      fd.append('to', toList.join(','));
+      if (ccList.length > 0) fd.append('cc', ccList.join(','));
+      fd.append('subject', subject);
+      fd.append('body', body);
+      fd.append('from', fromLocal);
+      for (const p of attachPaths) {
+        fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
+      }
       return apiPost<{ threadId: number; messageId: number }>(
         `/api/sites/${site.id}/inbox/send`,
-        {
-          api: auth.api, token: auth.token, idempotencyKey,
-          body: {
-            to: toList,
-            ...(ccList.length > 0 ? { cc: ccList } : {}),
-            subject,
-            body,
-            from: fromLocal,
-          },
-        },
+        { api: auth.api, token: auth.token, idempotencyKey, body: fd },
+      );
+    });
+  } catch (e) {
+    // KEH-164: lost response (network) - the server may have created the
+    // thread + outbound. The threadId is unknown here, so probe the recent
+    // threads list and positively identify THIS send's new thread (by
+    // pre-send snapshot + exact subject + exact recipient set) before
+    // reporting anything.
+    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
+    if (preSendThreadIds === null) {
+      throw new ApiError(0,
+        `Send request failed (network): ${e.message}. ` +
+        `Pre-send thread snapshot was unavailable, so the new thread cannot be ` +
+        `positively identified. Send status unknown - confirm manually with: ` +
+        `arcops inbox ls ${site.domain}`,
+        { kind: 'network' },
       );
     }
-    // Multipart: comma-joined email lists match the server's splitEmails parse.
-    const fd = new FormData();
-    fd.append('to', toList.join(','));
-    if (ccList.length > 0) fd.append('cc', ccList.join(','));
-    fd.append('subject', subject);
-    fd.append('body', body);
-    fd.append('from', fromLocal);
-    for (const p of attachPaths) {
-      fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
-    }
-    return apiPost<{ threadId: number; messageId: number }>(
-      `/api/sites/${site.id}/inbox/send`,
-      { api: auth.api, token: auth.token, idempotencyKey, body: fd },
-    );
-  });
+    const hit = await verifyAfterSendNetworkError({
+      networkError: e,
+      probe: () => probeRecentThreadsForSend(auth, site.id, {
+        subject, to: toList, cc: ccList, fromEmail, preSendThreadIds,
+      }),
+      manualCheck: `arcops inbox ls ${site.domain}`,
+    });
+    runSuccess({
+      title: 'Email sent',
+      elapsedMs: Date.now() - start,
+      extra: `send request failed (network), but verify confirms it landed on thread #${hit.threadId} as message #${hit.messageId}`,
+    });
+    const fmt = detectOutputFormat(args.output);
+    if (fmt === 'json') return printJson({ threadId: hit.threadId, messageId: hit.messageId });
+    return;
+  }
 
   // verify-after-send (contract item 3): confirm the outbound message the
   // server reported actually landed on the thread before claiming success.
@@ -672,12 +904,32 @@ export const draft = {
     const idempotencyKey = args['idempotency-key'] ?? deriveDraftSendKey(site.id, draftId);
 
     const start = Date.now();
-    const result = await withSpinner(`Sending draft #${draftId}…`, async () => {
-      return apiPost<{ messageId: number }>(
-        `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}/send`,
-        { api: auth.api, token: auth.token, idempotencyKey },
-      );
-    });
+    let result: { messageId: number };
+    try {
+      result = await withSpinner(`Sending draft #${draftId}…`, async () => {
+        return apiPost<{ messageId: number }>(
+          `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}/send`,
+          { api: auth.api, token: auth.token, idempotencyKey },
+        );
+      });
+    } catch (e) {
+      // KEH-164: lost response (network) - the server may have promoted the
+      // draft already. No pre-send snapshot on the --yes path, so the probe
+      // relies on the outbound's timestamp vs the send attempt.
+      if (!(e instanceof ApiError && e.kind === 'network')) throw e;
+      const hit = await verifyAfterSendNetworkError({
+        networkError: e,
+        probe: () => probeThreadForNewOutbound(auth, site.id, threadId, { sinceMs: start }),
+        manualCheck: `arcops inbox show ${site.domain} ${threadId}`,
+      });
+      runSuccess({
+        title: 'Draft sent',
+        elapsedMs: Date.now() - start,
+        extra: `send request failed (network), but verify confirms it landed as message #${hit.messageId}`,
+      });
+      if (detectOutputFormat(args.output) === 'json') return printJson({ messageId: hit.messageId });
+      return;
+    }
     // verify-after-send (contract item 3): confirm the promoted draft landed
     // as an outbound message on the thread.
     await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
