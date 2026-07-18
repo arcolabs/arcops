@@ -34,13 +34,16 @@ export function deriveReplyKey(
   threadId: number,
   body: string,
   attachPaths: string[],
+  bodyHtml?: string,
 ): string {
-  return `arcops-reply-${siteId}-${threadId}-${sha256hex(body + '\n' + hashAttachmentPaths(attachPaths))}`;
+  // bodyHtml joins the hash so a retry whose ONLY change is the html part gets
+  // a distinct key (and sends) instead of replaying the no-html result.
+  return `arcops-reply-${siteId}-${threadId}-${sha256hex(body + '\n' + (bodyHtml ?? '') + '\n' + hashAttachmentPaths(attachPaths))}`;
 }
 
 export function deriveSendKey(
   siteId: number,
-  args: { to: string[]; cc: string[]; subject: string; body: string; fromLocal: string },
+  args: { to: string[]; cc: string[]; subject: string; body: string; fromLocal: string; bodyHtml?: string },
   attachPaths: string[],
 ): string {
   // Fixed-shape literal => JSON.stringify is deterministic across retries.
@@ -50,6 +53,7 @@ export function deriveSendKey(
     subject: args.subject,
     body: args.body,
     from: args.fromLocal,
+    ...(args.bodyHtml !== undefined ? { bodyHtml: args.bodyHtml } : {}),
   });
   return `arcops-send-${siteId}-${sha256hex(payload + '\n' + hashAttachmentPaths(attachPaths))}`;
 }

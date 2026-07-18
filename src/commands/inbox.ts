@@ -143,6 +143,26 @@ async function resolveBody(args: {
   return { body: edited, source: 'editor' };
 }
 
+// Optional HTML companion to the plain-text body (--body-html / --body-html-file).
+// The server sends multipart/alternative when both parts are present; omitting
+// the flag keeps the request byte-identical to the pre-html CLI. Returns
+// undefined when the resolved html is empty/whitespace (server treats it the same).
+function resolveBodyHtml(args: {
+  'body-html'?: string;
+  'body-html-file'?: string;
+}): { bodyHtml: string; source: string } | undefined {
+  if (args['body-html'] !== undefined) {
+    const html = args['body-html'];
+    return html.trim() ? { bodyHtml: html, source: 'flag' } : undefined;
+  }
+  if (args['body-html-file']) {
+    const file = args['body-html-file'];
+    const raw = file === '-' ? readFileSync(0, 'utf8') : readFileSync(file, 'utf8');
+    return raw.trim() ? { bodyHtml: raw, source: file === '-' ? 'stdin' : `file:${file}` } : undefined;
+  }
+  return undefined;
+}
+
 function templateVarsFromThread(thread: {
   subject?: string | null;
   participant_emails?: string[];
@@ -351,6 +371,7 @@ type ThreadShowResult = {
 export async function reply(args: {
   site?: string; 'thread-id'?: string;
   body?: string; 'body-file'?: string; template?: string;
+  'body-html'?: string; 'body-html-file'?: string;
   attach?: string; quote?: string; yes?: string;
   'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
@@ -376,6 +397,8 @@ export async function reply(args: {
     body = await buildQuotedReply(body, auth, site.id, threadId, data);
   }
 
+  const htmlPart = resolveBodyHtml(args);
+
   const attachPaths = parseAttachPaths(args.attach);
   const recipients = data.thread.participant_emails.join(', ');
   const subject = data.thread.subject || 'Re: (no subject)';
@@ -390,6 +413,9 @@ export async function reply(args: {
   }
   process.stderr.write(`Body:     [${body.length} chars]\n`);
   process.stderr.write(body.split('\n').map((l) => '          ' + l).join('\n') + '\n');
+  if (htmlPart) {
+    process.stderr.write(`HTML:     [${htmlPart.bodyHtml.length} chars, ${htmlPart.source}]\n`);
+  }
   process.stderr.write(`─────────────────────────────────────────────────────\n`);
 
   if (args.yes !== 'true') {
@@ -399,7 +425,7 @@ export async function reply(args: {
 
   // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
   // the server instead of sending a second reply. --idempotency-key overrides.
-  const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
+  const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths, htmlPart?.bodyHtml);
 
   const start = Date.now();
   // Capture the server-returned messageId so verify-after-send confirms THAT
@@ -411,11 +437,12 @@ export async function reply(args: {
     if (attachPaths.length === 0) {
       return apiPost<{ messageId: number }>(
         `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-        { api: auth.api, token: auth.token, idempotencyKey, body: { body } },
+        { api: auth.api, token: auth.token, idempotencyKey, body: { body, ...(htmlPart ? { bodyHtml: htmlPart.bodyHtml } : {}) } },
       );
     }
     const fd = new FormData();
     fd.append('body', body);
+    if (htmlPart) fd.append('bodyHtml', htmlPart.bodyHtml);
     for (const p of attachPaths) {
       const buf = readFileSync(p);
       fd.append(
@@ -458,6 +485,7 @@ export async function send(args: {
   subject?: string;
   from?: string;
   body?: string; 'body-file'?: string; template?: string;
+  'body-html'?: string; 'body-html-file'?: string;
   attach?: string;
   yes?: string;
   'idempotency-key'?: string;
@@ -487,6 +515,8 @@ export async function send(args: {
   });
   if (!body || !body.trim()) { error('Body is empty.'); process.exit(2); }
 
+  const htmlPart = resolveBodyHtml(args);
+
   const attachPaths = parseAttachPaths(args.attach);
 
   process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
@@ -501,6 +531,9 @@ export async function send(args: {
   }
   process.stderr.write(`Body:     [${body.length} chars]\n`);
   process.stderr.write(body.split('\n').map((l) => '          ' + l).join('\n') + '\n');
+  if (htmlPart) {
+    process.stderr.write(`HTML:     [${htmlPart.bodyHtml.length} chars, ${htmlPart.source}]\n`);
+  }
   process.stderr.write(`─────────────────────────────────────────────────────\n`);
 
   if (args.yes !== 'true') {
@@ -511,7 +544,7 @@ export async function send(args: {
   // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
   // the server instead of sending a second email. --idempotency-key overrides.
   const idempotencyKey = args['idempotency-key']
-    ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal }, attachPaths);
+    ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal, bodyHtml: htmlPart?.bodyHtml }, attachPaths);
 
   const start = Date.now();
   const result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
@@ -526,6 +559,7 @@ export async function send(args: {
             subject,
             body,
             from: fromLocal,
+            ...(htmlPart ? { bodyHtml: htmlPart.bodyHtml } : {}),
           },
         },
       );
@@ -536,6 +570,7 @@ export async function send(args: {
     if (ccList.length > 0) fd.append('cc', ccList.join(','));
     fd.append('subject', subject);
     fd.append('body', body);
+    if (htmlPart) fd.append('bodyHtml', htmlPart.bodyHtml);
     fd.append('from', fromLocal);
     for (const p of attachPaths) {
       fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
