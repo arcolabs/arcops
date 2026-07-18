@@ -19,7 +19,7 @@ type ParsedArgv = { tokens: string[]; flags: Record<string, string> };
 // Flags listed in REPEATABLE accumulate across occurrences; values get joined
 // by NUL (\0). NUL is forbidden in POSIX paths so it round-trips unambiguously
 // for filename-bearing flags like --attach (which can carry spaces).
-const REPEATABLE = new Set(['attach']);
+const REPEATABLE = new Set(['attach', 'event']);
 const REPEATABLE_SEP = '\0';
 
 function setFlag(flags: Record<string, string>, key: string, value: string) {
