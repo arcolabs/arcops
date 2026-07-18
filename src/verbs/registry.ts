@@ -154,6 +154,29 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
   {
+    id: 'site:move',
+    name: 'Move site to another org',
+    summary: 'Move a site to another organization',
+    description:
+      'Re-home a site to another organization (KEH-161 tenant split). One transaction: ' +
+      'sites.org_id plus the site-level site_integrations rows holding the site\'s provider ' +
+      'credentials. Analytics/Stripe/GSC follow via site_id; event history stays with the ' +
+      'org that emitted it. Requires an identified human caller (browser session or ts_ ' +
+      'token; org-scoped BA api-keys are refused) with owner/admin membership in BOTH orgs. ' +
+      'Source-org site-constrained keys go inert (fail-closed); the response counts them.',
+    scope: 'write',
+    idempotent: false,
+    args: [
+      { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain.' },
+      { name: 'target_org', cliName: 'target-org', type: 'string', required: true, description: 'Target organization slug or id. Caller must be owner/admin of both orgs.' },
+      { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip interactive confirmation.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['site move acme.com --target-org wodex --yes'],
+    http: { method: 'POST', path: '/api/sites/:siteId/move', body: ['target_org'] },
+    outputShape: 'SiteMoveResult',
+  },
+  {
     id: 'site:profile',
     name: 'Site marketing profile',
     summary: 'Show the site marketing profile',
