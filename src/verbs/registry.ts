@@ -707,6 +707,23 @@ export const VERBS: VerbDef[] = [
     outputShape: 'void',
   },
 
+  // ── Audit (§8.3.2 ③: what did my agent do for this site) ──────────────
+  {
+    id: 'audit:ls',
+    name: 'List site audit log',
+    summary: 'Show send/write scope operations for a site (what agents did)',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain.' },
+      { name: 'limit', type: 'number', description: 'Max entries (server caps at 1000).' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['audit ls acme.com', 'audit ls acme.com --limit 50 --output json'],
+    http: { method: 'GET', path: '/api/sites/:siteId/audit', query: ['limit'] },
+    outputShape: 'unknown',
+  },
+
   // ── Capability discovery (local; prints this registry) ──────────────
   {
     id: 'verbs',
