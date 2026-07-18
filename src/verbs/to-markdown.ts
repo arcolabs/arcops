@@ -29,6 +29,7 @@ const CATEGORY_ORDER = [
   'Inbox drafts',
   'Templates (local)',
   'Capability discovery (local)',
+  'Audit',
 ] as const;
 
 export function categoryOf(v: VerbDef): string {
@@ -44,6 +45,7 @@ export function categoryOf(v: VerbDef): string {
   if (id.startsWith('inbox:')) return 'Inbox lifecycle';
   if (id.startsWith('template:')) return 'Templates (local)';
   if (id === 'verbs') return 'Capability discovery (local)';
+  if (id.startsWith('audit:')) return 'Audit';
   return 'Other';
 }
 

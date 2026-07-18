@@ -10,6 +10,7 @@
 // string entry (e.g. `'output'`) defaults to type `string`.
 
 import * as attribution from './attribution';
+import * as audit from './audit';
 import * as auth from './auth';
 import * as campaign from './campaign';
 import * as customer from './customer';
@@ -250,6 +251,12 @@ export const COMMANDS: CommandDef[] = [
     flags: [{ name: '--json', type: 'bool' }, '--output'],
     examples: ['verbs --json'],
     handler: (a) => verbsCmd.verbs({ json: a.json, output: a.output }) },
+
+  // ── Audit (§8.3.2 ③: what did my agent do for this site) ──
+  { path: ['audit', 'ls'], summary: 'Show send/write scope operations for a site (what agents did)',
+    positional: ['site'], flags: [{ name: '--limit', type: 'number' }, '--output'],
+    examples: ['audit ls acme.com', 'audit ls acme.com --limit 50 --output json'],
+    handler: (a) => audit.ls({ site: a.site, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
 ];
 
 // ── C2/KEH-150 Phase 2 coexistence (design §6.2) ──────────────────────
