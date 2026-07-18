@@ -1,6 +1,6 @@
 {
   "name": "@arcolab/arcops",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Agent-first ops cockpit CLI for the Arcops backend (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox).",
   "bin": {
