@@ -157,94 +157,78 @@ async function probeThreadForNewOutbound(
   return fresh.length > 0 ? { threadId, messageId: fresh[fresh.length - 1].id } : null;
 }
 
-// How many recent threads the cold-send probe inspects (and the pre-send
-// snapshot records). A thread our send just created sits at the top of the
-// list (last_message_at = now), so a small window is enough; the snapshot uses
-// the same bound so every pre-existing thread the probe can see was already
-// captured pre-send (no false "new" thread).
-const PROBE_RECENT_THREAD_LIMIT = 5;
+// ─── Cold-send network-failure recovery (KEH-164 round 3) ──────────────
+// Rounds 1-2 probed the recent-threads list to identify the failed send's new
+// thread; Gate rejected both because ANY recency-window mechanism is racy (a
+// pre-existing matching thread just outside the window can be bumped in by
+// unrelated activity). Round 3 abandons probing entirely: the Idempotency-Key
+// header already carries a client-unique token with the send, and the server's
+// reserve/replay store (arcops-server src/lib/idempotency.ts) is the
+// authoritative record of it. Recovery = re-issue the IDENTICAL request with
+// the SAME key:
+//   - original was processed  -> the server replays the stored first result
+//     (NO duplicate side effect) -> positively confirmed landed.
+//   - original never arrived  -> the retry performs the send, exactly once
+//     overall - which is the intended end state anyway.
+//   - 409 idempotency_in_progress -> the original is still in flight (or
+//     crashed after the side effect but before commit) -> bounded backoff,
+//     then re-evaluate; exhausting the budget reports status unknown.
+//   - network error again -> status unknown + manual check.
+// No clocks, no list ordering, and no other actor's activity can tilt the
+// verdict, and the ambiguity fallback never guesses success.
 
-// Best-effort point-in-time snapshot of recent thread ids BEFORE a cold send.
-// A post-error probe uses it to tell the thread THIS send created (a brand-new
-// id) from pre-existing threads that merely share subject/recipients - the
-// cold-send false positive an operator nearly blind-retried on (KEH-164 gate
-// round 1). Returns null when the snapshot GET itself fails: the caller then
-// cannot positively identify a new thread and reports "status unknown" rather
-// than guessing.
-async function snapshotRecentThreadIds(
-  auth: { api: string; token: string },
-  siteId: number,
-): Promise<Set<number> | null> {
-  try {
-    const list = await apiGet<{ threads: Array<{ id: number }> }>(
-      `/api/sites/${siteId}/inbox/threads`,
-      { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
-    );
-    return new Set(list.threads.map((t) => t.id));
-  } catch {
-    return null;
-  }
-}
+// Total same-key retry budget after the original network failure.
+const RECOVERY_MAX_ATTEMPTS = 3;
+// Cap on each 409-in_progress wait so a persistently in-flight original
+// (crashed post-side-effect, pre-commit) fails fast instead of parking the
+// CLI for the server's 5-minute in_progress TTL.
+const RECOVERY_IN_PROGRESS_WAIT_CAP_MS = 10_000;
 
-// Cold `send` creates a NEW thread, so on a network error the threadId is
-// unknown. The probe re-lists recent threads and positively identifies THIS
-// send's thread as the one that (a) did NOT exist pre-send (`preSendThreadIds`
-// snapshot), (b) has the exact same subject, (c) has the EXACT recipient set
-// (to ∪ cc, the from address excluded on both sides - the server stores
-// participant_emails as {from} ∪ to ∪ cc), and (d) carries an outbound. Only a
-// thread satisfying ALL four is reported as landed; anything else falls through
-// to "not landed, safe to retry". This is clock-skew-free (it keys on thread
-// id existence, not timestamps) and rejects both pre-existing same-subject
-// threads and new threads with a mismatched recipient set (e.g. missing cc).
-async function probeRecentThreadsForSend(
-  auth: { api: string; token: string },
-  siteId: number,
-  opts: {
-    subject: string;
-    to: string[];
-    cc: string[];
-    fromEmail: string;
-    preSendThreadIds: Set<number>;
-  },
-): Promise<OutboundHit | null> {
-  const list = await apiGet<{ threads: Array<{ id: number }> }>(
-    `/api/sites/${siteId}/inbox/threads`,
-    { api: auth.api, token: auth.token, query: { limit: PROBE_RECENT_THREAD_LIMIT } },
-  );
-  // Exact recipient set the operator addressed this send to (to + cc, deduped,
-  // own from address stripped - mirroring the server's finalTo/finalCc).
-  const fromEmail = opts.fromEmail.toLowerCase();
-  const expectedRecipients = new Set(
-    [...opts.to, ...opts.cc].map((e) => e.toLowerCase()).filter((e) => e !== fromEmail),
-  );
-  for (const t of list.threads.slice(0, PROBE_RECENT_THREAD_LIMIT)) {
-    // (a) only a thread that did NOT exist pre-send can be this send's thread.
-    if (opts.preSendThreadIds.has(t.id)) continue;
-    const detail = await apiGet<{
-      thread: { subject?: string | null; participant_emails?: string[] };
-      messages: Array<{ id: number; direction: string }>;
-    }>(`/api/sites/${siteId}/inbox/threads/${t.id}`, { api: auth.api, token: auth.token });
-    // (b) exact subject.
-    if ((detail.thread.subject ?? '') !== opts.subject) continue;
-    // (c) exact recipient set: thread participants minus our from address must
-    // equal to ∪ cc exactly. A subset (missing cc) or superset (a different
-    // send to extra recipients) is NOT this send.
-    const threadRecipients = new Set(
-      (detail.thread.participant_emails ?? [])
-        .map((e) => e.toLowerCase())
-        .filter((e) => e !== fromEmail),
-    );
-    if (threadRecipients.size !== expectedRecipients.size) continue;
-    let recipientsMatch = true;
-    for (const e of expectedRecipients) {
-      if (!threadRecipients.has(e)) { recipientsMatch = false; break; }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Re-issue the failed send with the same Idempotency-Key until it succeeds
+// (replay or exactly-once completion), the budget runs out, or a definitive
+// server verdict surfaces. Returns the send result on success; throws an
+// ApiError describing the unknown status otherwise. Non-network, non-409
+// errors (4xx/5xx, idempotency_conflict) are re-thrown as-is.
+async function resendWithSameKey<T>(opts: {
+  send: () => Promise<T>;
+  networkError: ApiError; // the original failure, for the unknown-status message
+  manualCheck: string;    // e.g. `arcops inbox ls <site>`
+}): Promise<T> {
+  let lastNetworkError = opts.networkError;
+  let sawInProgress = false;
+  for (let attempt = 1; attempt <= RECOVERY_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await opts.send();
+    } catch (e) {
+      if (e instanceof ApiError && e.kind === 'api' && e.code === 'idempotency_in_progress') {
+        sawInProgress = true;
+        const detail = e.detail as { retry_after_sec?: unknown } | undefined;
+        const waitSec = typeof detail?.retry_after_sec === 'number' ? detail.retry_after_sec : 5;
+        const waitMs = Math.min(waitSec * 1000, RECOVERY_IN_PROGRESS_WAIT_CAP_MS);
+        info(`Original send still in flight on the server; re-checking in ${Math.round(waitMs / 1000)}s (attempt ${attempt}/${RECOVERY_MAX_ATTEMPTS})…`);
+        await sleep(waitMs);
+        continue;
+      }
+      if (e instanceof ApiError && e.kind === 'network') {
+        lastNetworkError = e;
+        continue;
+      }
+      throw e;
     }
-    if (!recipientsMatch) continue;
-    // (d) the newly created thread's outbound is this send's outbound.
-    const outbound = detail.messages.find((m) => m.direction === 'outbound');
-    if (outbound) return { threadId: t.id, messageId: outbound.id };
   }
-  return null;
+  // Budget exhausted: report unknown, never a guessed success (CEO r3
+  // ambiguity fallback).
+  throw new ApiError(0,
+    `Send request failed (network): ${opts.networkError.message}. ` +
+    (sawInProgress
+      ? `The same-key retry kept finding the original request in flight, so its outcome cannot be confirmed. ` +
+        `Send status unknown - confirm manually with: ${opts.manualCheck} before re-running (a post-crash re-run is deduped by the idempotency key only if the original never reached the side effect).`
+      : `The same-key retry also failed to reach the server (${lastNetworkError.message}). ` +
+        `Send status unknown - confirm manually with: ${opts.manualCheck}. Re-running the same command is safe: the idempotency key replays a completed send instead of duplicating it.`),
+    { kind: 'network' },
+  );
 }
 
 // Shared verdict for the three send call sites. Returns the probe hit when
@@ -706,75 +690,66 @@ export async function send(args: {
     ?? deriveSendKey(site.id, { to: toList, cc: ccList, subject, body, fromLocal }, attachPaths);
 
   const start = Date.now();
-  // KEH-164: snapshot recent thread ids before the send so a network-error
-  // probe can identify the NEW thread this send creates (vs a pre-existing one
-  // sharing subject/recipients). Best-effort; null => probe can't positively
-  // confirm => "status unknown" rather than a guessed success.
-  const preSendThreadIds = await snapshotRecentThreadIds(auth, site.id);
-  const fromEmail = `${fromLocal}@${site.domain}`;
-  let result: { threadId: number; messageId: number };
-  try {
-    result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, async () => {
-      if (attachPaths.length === 0) {
-        return apiPost<{ threadId: number; messageId: number }>(
-          `/api/sites/${site.id}/inbox/send`,
-          {
-            api: auth.api, token: auth.token, idempotencyKey,
-            body: {
-              to: toList,
-              ...(ccList.length > 0 ? { cc: ccList } : {}),
-              subject,
-              body,
-              from: fromLocal,
-            },
-          },
-        );
-      }
-      // Multipart: comma-joined email lists match the server's splitEmails parse.
-      const fd = new FormData();
-      fd.append('to', toList.join(','));
-      if (ccList.length > 0) fd.append('cc', ccList.join(','));
-      fd.append('subject', subject);
-      fd.append('body', body);
-      fd.append('from', fromLocal);
-      for (const p of attachPaths) {
-        fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
-      }
+  // The send request is a named function so the network-error recovery can
+  // re-issue the IDENTICAL request (same Idempotency-Key) - see the catch.
+  const doSend = (): Promise<{ threadId: number; messageId: number }> => {
+    if (attachPaths.length === 0) {
       return apiPost<{ threadId: number; messageId: number }>(
         `/api/sites/${site.id}/inbox/send`,
-        { api: auth.api, token: auth.token, idempotencyKey, body: fd },
-      );
-    });
-  } catch (e) {
-    // KEH-164: lost response (network) - the server may have created the
-    // thread + outbound. The threadId is unknown here, so probe the recent
-    // threads list and positively identify THIS send's new thread (by
-    // pre-send snapshot + exact subject + exact recipient set) before
-    // reporting anything.
-    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
-    if (preSendThreadIds === null) {
-      throw new ApiError(0,
-        `Send request failed (network): ${e.message}. ` +
-        `Pre-send thread snapshot was unavailable, so the new thread cannot be ` +
-        `positively identified. Send status unknown - confirm manually with: ` +
-        `arcops inbox ls ${site.domain}`,
-        { kind: 'network' },
+        {
+          api: auth.api, token: auth.token, idempotencyKey,
+          body: {
+            to: toList,
+            ...(ccList.length > 0 ? { cc: ccList } : {}),
+            subject,
+            body,
+            from: fromLocal,
+          },
+        },
       );
     }
-    const hit = await verifyAfterSendNetworkError({
+    // Multipart: comma-joined email lists match the server's splitEmails parse.
+    const fd = new FormData();
+    fd.append('to', toList.join(','));
+    if (ccList.length > 0) fd.append('cc', ccList.join(','));
+    fd.append('subject', subject);
+    fd.append('body', body);
+    fd.append('from', fromLocal);
+    for (const p of attachPaths) {
+      fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
+    }
+    return apiPost<{ threadId: number; messageId: number }>(
+      `/api/sites/${site.id}/inbox/send`,
+      { api: auth.api, token: auth.token, idempotencyKey, body: fd },
+    );
+  };
+  let result: { threadId: number; messageId: number };
+  try {
+    result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, doSend);
+  } catch (e) {
+    // KEH-164 r3: a lost response (network) is not proof of failure. Re-issue
+    // the identical request with the same Idempotency-Key: a processed
+    // original replays its stored result (no duplicate), an unprocessed one
+    // is completed by this retry - exactly once either way. No probing, no
+    // recency windows, race-free by the server's (site_id, key) uniqueness.
+    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
+    warn(`Send request failed (network): ${e.message}`);
+    info('Retrying with the same Idempotency-Key: a processed send replays its stored result (no duplicate); an unreceived one is completed by this retry, exactly once…');
+    result = await resendWithSameKey({
+      send: doSend,
       networkError: e,
-      probe: () => probeRecentThreadsForSend(auth, site.id, {
-        subject, to: toList, cc: ccList, fromEmail, preSendThreadIds,
-      }),
       manualCheck: `arcops inbox ls ${site.domain}`,
     });
+    // Same contract-item-3 guarantee as the normal path: the reported
+    // messageId must exist on the thread before claiming success.
+    await verifyOutboundLanded(auth, site.id, result.threadId, { expectedMessageId: result.messageId });
     runSuccess({
       title: 'Email sent',
       elapsedMs: Date.now() - start,
-      extra: `send request failed (network), but verify confirms it landed on thread #${hit.threadId} as message #${hit.messageId}`,
+      extra: `send request failed (network); same-key retry confirms exactly one outbound on thread #${result.threadId} as message #${result.messageId}`,
     });
     const fmt = detectOutputFormat(args.output);
-    if (fmt === 'json') return printJson({ threadId: hit.threadId, messageId: hit.messageId });
+    if (fmt === 'json') return printJson(result);
     return;
   }
 

@@ -4,11 +4,17 @@ import net from 'node:net';
 
 // KEH-164: when a send-class request (inbox reply / send / draft send) fails
 // with a NETWORK error (fetch failed - the response was lost in transit), the
-// server may already have processed the send. The CLI must run a
-// verify-after-send probe before reporting:
-//   - probe finds a fresh outbound  -> report success, exit 0
-//   - probe finds nothing           -> failure + "safe to retry" hint
-//   - probe itself fails (network)  -> "status unknown" + manual check, exit 1
+// server may already have processed the send. The CLI must establish the real
+// outcome before reporting:
+//   - reply / draft send: probe the (known) thread for a fresh outbound
+//     (landed -> success exit 0; nothing -> failure + safe-to-retry hint;
+//     probe fails -> "status unknown" + manual check, exit 1).
+//   - cold send (r3): no probe - the threadId is unknown and recency-window
+//     probes are racy (gate r1/r2). Instead the CLI re-issues the IDENTICAL
+//     request with the SAME Idempotency-Key: a processed original replays its
+//     stored result (no duplicate), an unreceived one is completed exactly
+//     once; persistent 409 in_progress / repeated network failure -> "status
+//     unknown", never a guessed success.
 //
 // A plain mock server can't make fetch throw on demand, so each test puts a
 // raw TCP proxy in front of the mock HTTP server. The proxy pipes bytes
@@ -44,11 +50,12 @@ function json(body: unknown, status = 200): Response {
 }
 
 // TCP proxy that kills the connection when the kill request line appears in
-// the client->server stream. onKill flips mock state to reflect whatever the
-// server would have done before the response was lost.
+// the client->server stream. onKill receives the accumulated request bytes
+// (so tests can read headers, e.g. the Idempotency-Key) and flips mock state
+// to reflect whatever the server would have done before the response was lost.
 function startKillingProxy(upstreamPort: number, cfg: {
   killRequestLine: string; // e.g. 'POST /api/sites/8/inbox/threads/1/reply'
-  onKill: () => void;
+  onKill: (requestHead: string) => void;
   killSubsequent?: boolean; // also destroy every later connection (verify fails too)
 }): Promise<{ base: string; close: () => Promise<void> }> {
   let killed = false;
@@ -68,7 +75,7 @@ function startKillingProxy(upstreamPort: number, cfg: {
       scanBuf += chunk.toString('latin1');
       if (scanBuf.includes(cfg.killRequestLine)) {
         killed = true;
-        cfg.onKill();
+        cfg.onKill(scanBuf);
         client.destroy();
         upstream.destroy();
       }
@@ -207,41 +214,70 @@ describe('network-failure verify-after-send (KEH-164): reply', () => {
   });
 });
 
-describe('network-failure verify-after-send (KEH-164): cold send', () => {
-  test('network error but the new thread + outbound landed -> report success, exit 0', async () => {
-    const state = { created: false };
-    const { port, stop } = await mockServer([
+describe('network-failure recovery (KEH-164 r3): cold send via same-key retry', () => {
+  // Round 3 replaced the racy recency-window probe with an idempotent
+  // same-key retry: the Idempotency-Key header is the client-unique marker,
+  // and the server's reserve/replay store positively identifies (or safely
+  // completes) the original send. The mock below emulates that store: the
+  // first request with a key runs the side effect and records the result; a
+  // repeat of the same key replays the recorded result WITHOUT re-running.
+  // False positives are structurally impossible - there is no candidate
+  // matching at all - so the r1/r2 collision regression tests are gone with
+  // the probe they tested.
+
+  type SendResult = { threadId: number; messageId: number };
+  function idempotentSendMock() {
+    const store = new Map<string, SendResult>();
+    const state = { processedCount: 0, replayCount: 0, landed: false };
+    const routes: Route[] = [
       SITES_ROUTE,
-      // threads list (probe step 1): the just-created thread sits at the top
-      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
-        ? json({
-            threads: state.created
-              ? [{ id: 42, subject: 't', last_message_at: new Date().toISOString() }]
-              : [],
-            counts: {},
-            nextCursor: null,
-          })
-        : undefined as unknown as Response,
-      // thread detail (probe step 2). participant_emails mirrors the real
-      // server shape for a cold send: {from} ∪ to ∪ cc (here support@sunor.cc
-      // + a@b.com). The probe strips the from address and exact-matches to∪cc.
+      // thread detail for verifyOutboundLanded after the retry succeeds
       (req, url) => url.pathname === '/api/sites/8/inbox/threads/42' && req.method === 'GET'
         ? json({
             thread: { id: 42, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
-            messages: [{ id: 99, direction: 'outbound', received_at: new Date().toISOString() }],
+            messages: state.landed
+              ? [{ id: 99, direction: 'outbound', received_at: new Date().toISOString() }]
+              : [],
           })
         : undefined as unknown as Response,
       (req, url) => {
-        if (url.pathname === '/api/sites/8/inbox/send' && req.method === 'POST') {
-          state.created = true;
-          return json({ threadId: 42, messageId: 99 });
+        if (url.pathname !== '/api/sites/8/inbox/send' || req.method !== 'POST') {
+          return undefined as unknown as Response;
         }
-        return undefined as unknown as Response;
+        const key = req.headers.get('idempotency-key') ?? '';
+        const existing = store.get(key);
+        if (existing) {
+          state.replayCount++;
+          return json(existing);
+        }
+        state.processedCount++;
+        state.landed = true;
+        const result = { threadId: 42, messageId: 99 };
+        store.set(key, result);
+        return json(result);
       },
-    ]);
+    ];
+    return { store, state, routes };
+  }
+
+  function keyFromHead(head: string): string {
+    const m = head.toLowerCase().match(/idempotency-key:\s*(\S+)/);
+    if (!m) throw new Error('no idempotency-key header in killed request');
+    return m[1];
+  }
+
+  test('original processed (response lost) -> same-key retry REPLAYS, no second side effect, exit 0', async () => {
+    const { store, state, routes } = idempotentSendMock();
+    const { port, stop } = await mockServer(routes);
     const proxy = await startKillingProxy(port, {
       killRequestLine: 'POST /api/sites/8/inbox/send',
-      onKill: () => { state.created = true; },
+      // The server processed the original before the response was lost:
+      // record the result under the request's idempotency key (what the
+      // reserve/commit store would hold).
+      onKill: (head) => {
+        store.set(keyFromHead(head), { threadId: 42, messageId: 99 });
+        state.landed = true;
+      },
     });
     try {
       const res = await runCli([
@@ -249,40 +285,58 @@ describe('network-failure verify-after-send (KEH-164): cold send', () => {
         '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes',
       ]);
       expect(res.code).toBe(0);
-      expect(res.stderr).toContain('verify confirms it landed on thread #42 as message #99');
+      expect(res.stderr).toContain('same-key retry confirms exactly one outbound on thread #42 as message #99');
       expect(res.stderr).toContain('Email sent');
+      // The retry MUST be a replay: no second side effect. (processedCount is
+      // 0 or 1 depending on whether the killed original reached the mock
+      // handler before the socket died; the retry itself never re-runs.)
+      expect(state.replayCount).toBe(1);
+      expect(state.processedCount).toBeLessThanOrEqual(1);
+      expect(store.size).toBe(1);
     } finally {
       await proxy.close();
       await stop();
     }
   });
 
-  test('network error, send NOT processed, pre-existing same-subject/to thread with recent outbound -> failure + safe-to-retry (no false positive)', async () => {
-    // Regression for KEH-164 gate round 1: the old probe matched ANY recent
-    // thread with the same subject + a superset of `to` and a fresh outbound,
-    // so a pre-existing thread (from an earlier send) with a recent outbound
-    // made an unprocessed send falsely report success (exit 0). The pre-send
-    // thread-id snapshot must exclude pre-existing threads so only a thread
-    // THIS send creates can be confirmed.
-    const recentIso = new Date().toISOString();
+  test('original never arrived -> same-key retry completes the send exactly once, exit 0 (json out)', async () => {
+    const { store, state, routes } = idempotentSendMock();
+    const { port, stop } = await mockServer(routes);
+    const proxy = await startKillingProxy(port, {
+      killRequestLine: 'POST /api/sites/8/inbox/send',
+      onKill: () => {}, // the request died before the server processed anything
+    });
+    try {
+      const res = await runCli([
+        '--api', proxy.base, 'inbox', 'send', 'sunor.cc',
+        '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes', '--output', 'json',
+      ]);
+      expect(res.code).toBe(0);
+      expect(res.stderr).toContain('same-key retry confirms exactly one outbound on thread #42 as message #99');
+      expect(res.stdout).toContain('"threadId": 42');
+      expect(res.stdout).toContain('"messageId": 99');
+      // Exactly one side effect across both attempts (either the killed
+      // original squeaked through or the retry ran - never both).
+      expect(state.processedCount).toBe(1);
+      expect(store.size).toBe(1);
+    } finally {
+      await proxy.close();
+      await stop();
+    }
+  });
+
+  test('retry keeps hitting 409 idempotency_in_progress -> budget exhausts, status unknown, no guessed success', async () => {
     const { port, stop } = await mockServer([
       SITES_ROUTE,
-      // threads list: a pre-existing thread 7 is always present, so BOTH the
-      // pre-send snapshot and the post-error probe see it. The send below is
-      // NOT processed, so no new thread appears.
-      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
-        ? json({ threads: [{ id: 7, subject: 't', last_message_at: recentIso }], counts: {}, nextCursor: null })
-        : undefined as unknown as Response,
-      // thread 7: same subject + same `to` as our send, with a fresh outbound
-      // from an earlier send - the exact false-positive bait.
-      (req, url) => url.pathname === '/api/sites/8/inbox/threads/7' && req.method === 'GET'
-        ? json({
-            thread: { id: 7, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
-            messages: [{ id: 50, direction: 'outbound', received_at: recentIso }],
-          })
-        : undefined as unknown as Response,
-      // No send POST route + onKill no-op: the proxy kills the connection
-      // before the server processes anything, so the send never lands.
+      (req, url) => {
+        if (url.pathname === '/api/sites/8/inbox/send' && req.method === 'POST') {
+          return json(
+            { error: { code: 'idempotency_in_progress', message: 'A request with this Idempotency-Key is still in flight.', detail: { retry_after_sec: 1 } } },
+            409,
+          );
+        }
+        return undefined as unknown as Response;
+      },
     ]);
     const proxy = await startKillingProxy(port, {
       killRequestLine: 'POST /api/sites/8/inbox/send',
@@ -294,55 +348,34 @@ describe('network-failure verify-after-send (KEH-164): cold send', () => {
         '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes',
       ]);
       expect(res.code).not.toBe(0);
-      expect(res.stderr).toContain('NOT sent');
-      expect(res.stderr).toContain('Safe to retry');
-      expect(res.stderr).toContain('idempotency key will replay');
+      expect(res.stderr).toContain('Send status unknown');
+      expect(res.stderr).toContain('in flight');
+      expect(res.stderr).toContain('arcops inbox ls sunor.cc');
+      expect(res.stderr).not.toContain('Email sent');
     } finally {
       await proxy.close();
       await stop();
     }
   });
 
-  test('network error, a new thread appears with a mismatched recipient set (missing cc) -> failure + safe-to-retry (no false positive)', async () => {
-    // Regression for KEH-164 gate round 1: the old probe matched `to` as a
-    // subset of participants (ignoring cc), so a thread to a subset of the
-    // recipients could be misclaimed as this send. The probe now requires an
-    // EXACT recipient set (to ∪ cc). Here a thread appears in the probe
-    // window (a concurrent send to a@b.com only) while our send (to a@b.com
-    // + cc c@d.com) is lost in transit - it must NOT be reported as our send.
-    const state = { appeared: false };
-    const recentIso = new Date().toISOString();
-    const { port, stop } = await mockServer([
-      SITES_ROUTE,
-      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
-        ? json({
-            threads: state.appeared ? [{ id: 42, subject: 't', last_message_at: recentIso }] : [],
-            counts: {}, nextCursor: null,
-          })
-        : undefined as unknown as Response,
-      // thread 42: subject matches, but participants are a SUBSET of our send
-      // (missing cc c@d.com) - a different send. Exact-match must reject it.
-      (req, url) => url.pathname === '/api/sites/8/inbox/threads/42' && req.method === 'GET'
-        ? json({
-            thread: { id: 42, subject: 't', participant_emails: ['support@sunor.cc', 'a@b.com'] },
-            messages: [{ id: 99, direction: 'outbound', received_at: recentIso }],
-          })
-        : undefined as unknown as Response,
-    ]);
+  test('retry also network-fails -> status unknown + safe-to-rerun guidance, no guessed success', async () => {
+    const { routes } = idempotentSendMock();
+    const { port, stop } = await mockServer(routes);
     const proxy = await startKillingProxy(port, {
       killRequestLine: 'POST /api/sites/8/inbox/send',
-      // A concurrent thread 42 appears in the probe window; our own send is
-      // killed in transit and never processed.
-      onKill: () => { state.appeared = true; },
+      onKill: () => {},
+      killSubsequent: true, // every retry connection dies too
     });
     try {
       const res = await runCli([
         '--api', proxy.base, 'inbox', 'send', 'sunor.cc',
-        '--to', 'a@b.com', '--cc', 'c@d.com', '--subject', 't', '--body', 'hi', '--yes',
+        '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes',
       ]);
       expect(res.code).not.toBe(0);
-      expect(res.stderr).toContain('NOT sent');
-      expect(res.stderr).toContain('Safe to retry');
+      expect(res.stderr).toContain('Send status unknown');
+      expect(res.stderr).toContain('Re-running the same command is safe');
+      expect(res.stderr).toContain('arcops inbox ls sunor.cc');
+      expect(res.stderr).not.toContain('Email sent');
     } finally {
       await proxy.close();
       await stop();
