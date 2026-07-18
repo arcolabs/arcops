@@ -17,6 +17,8 @@
     "dev": "bun --watch run src/main.ts --",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "gen:skill": "bun run scripts/gen-skill.ts",
+    "check:skill": "bun run scripts/gen-skill.ts --check",
     "prepublishOnly": "bun run build"
   },
   "keywords": [
