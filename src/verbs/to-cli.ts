@@ -86,6 +86,8 @@ export function generateCommandDefs(
     };
     if (positional.length > 0) cmd.positional = positional;
     if (verb.examples.length > 0) cmd.examples = verb.examples;
+    // KEH-179: carry the registry prose through to --help (Details) + SKILL.md.
+    if (verb.description) cmd.description = verb.description;
     return cmd;
   });
 }

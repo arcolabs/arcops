@@ -30,6 +30,7 @@ const CATEGORY_ORDER = [
   'Templates (local)',
   'Capability discovery (local)',
   'Audit',
+  'Invite administration',
 ] as const;
 
 export function categoryOf(v: VerbDef): string {
@@ -46,6 +47,7 @@ export function categoryOf(v: VerbDef): string {
   if (id.startsWith('template:')) return 'Templates (local)';
   if (id === 'verbs') return 'Capability discovery (local)';
   if (id.startsWith('audit:')) return 'Audit';
+  if (id.startsWith('invite:')) return 'Invite administration';
   return 'Other';
 }
 
@@ -82,6 +84,15 @@ export function generateVerbReference(verbs: VerbDef[]): string {
       const scope = `\`${v.scope}\``;
       const kind = v.local ? 'local' : 'remote';
       lines.push(`| ${cmd} | ${scope} | ${kind} | ${escCell(v.summary)} |`);
+    }
+    // KEH-179: per-command prose (e.g. invite form limits) after the table, so
+    // the doc carries the same limitations as `--help` without a second source.
+    const notes = group.filter((v) => v.description);
+    if (notes.length > 0) {
+      lines.push('');
+      for (const v of notes) {
+        lines.push(`**\`${cliPath(v)}\`**: ${v.description}`);
+      }
     }
     lines.push('');
   };

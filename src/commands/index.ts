@@ -18,6 +18,7 @@ import * as directory from './directory';
 import * as funnel from './funnel';
 import * as gsc from './gsc';
 import * as inbox from './inbox';
+import * as invite from './invite';
 import * as overview from './overview';
 import * as profile from './profile';
 import * as revenue from './revenue';
@@ -51,6 +52,11 @@ export type CommandDef = {
   // generated commands (from the registry); legacy hand-written entries leave
   // it unset. Non-enforced for local verbs (design §5.1).
   scope?: VerbScope;
+  // KEH-179: longer prose carried from the registry verb's `description` into
+  // `--help` (Details section) and SKILL.md. Only generated commands carry it;
+  // the consistency test does not compare it (flags/positionals/summary/examples
+  // only), so legacy hand-written entries leave it unset.
+  description?: string;
 };
 
 // Accessors that normalize bare-string specs to `{ name, type }` for renderers.
@@ -257,6 +263,24 @@ export const COMMANDS: CommandDef[] = [
     positional: ['site'], flags: [{ name: '--limit', type: 'number' }, '--output'],
     examples: ['audit ls acme.com', 'audit ls acme.com --limit 50 --output json'],
     handler: (a) => audit.ls({ site: a.site, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
+
+  // ── Invite administration (KEH-179 / INV-2; hits arcops-server wrap routes) ──
+  { path: ['invite', 'create'], summary: 'Create an invite code (plaintext shown once)',
+    flags: ['--email', '--org-name', { name: '--max-uses', type: 'number' }, '--expires', '--note', '--output'],
+    examples: ['invite create --email jane@example.com --org-name "Acme Inc" --note "Q3 onboarding"'],
+    handler: (a) => invite.create({ email: a.email, org_name: a.org_name, max_uses: a.max_uses, expires: a.expires, note: a.note, token: a.token, api: a.api, output: a.output }) },
+  { path: ['invite', 'ls'], summary: 'List invite codes (code plaintext never shown)',
+    flags: ['--status', '--output'],
+    examples: ['invite ls', 'invite ls --status pending'],
+    handler: (a) => invite.ls({ status: a.status, token: a.token, api: a.api, output: a.output }) },
+  { path: ['invite', 'revoke'], summary: 'Revoke an invite code (idempotent)',
+    positional: ['id'], flags: ['--output'],
+    examples: ['invite revoke abc123'],
+    handler: (a) => invite.revoke({ id: a.id, token: a.token, api: a.api, output: a.output }) },
+  { path: ['invite', 'stats'], summary: 'Aggregate invite-code counts by status',
+    flags: ['--output'],
+    examples: ['invite stats'],
+    handler: (a) => invite.stats({ token: a.token, api: a.api, output: a.output }) },
 ];
 
 // ── C2/KEH-150 Phase 2 coexistence (design §6.2) ──────────────────────
