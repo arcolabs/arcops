@@ -206,7 +206,10 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops site show` | `read` | remote | Show a single site |
 | `arcops site profile` | `read` | remote | Show the site marketing profile |
 | `arcops site submissions` | `read` | remote | Show directory submission status (with tracked UTM URLs) |
+| `arcops site move` | `write` | remote | Move a site to another organization (human-admin only) |
 | `arcops directory ls` | `read` | remote | List the global directory catalog |
+
+**`arcops site move`**: Re-homes a site (and its site-level integrations) to another organization via the public site-move endpoint (arcops-server #23 / KEH-161). The server requires an IDENTIFIED HUMAN admin: a ts_ token bridged to a Better Auth user who is owner/admin of BOTH the source and target orgs. Org-scoped BA api-keys are refused with 403 move_requires_human_admin (no personal identity to prove dual-admin) - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Everything keyed by site_id alone (analytics, Stripe, GSC) follows the site automatically; outbound_events history stays attributed to the emitting org. The response reports retired_site_keys: source-org BA keys constrained to this site that are now inert (org mismatch fails closed) - re-issue them under the target org. Not idempotent: a retry after a successful move 422s (already_in_org) or 404s (cross-org from the source token). Gated by a typed confirm (site domain) unless --yes is passed.
 
 ### Analytics
 
