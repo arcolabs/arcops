@@ -53,27 +53,46 @@ ARCOPS_API=https://arcops.cc arcops site ls                # per-command overrid
 
 `ARCOPS_API` is the canonical env override; `QUAY_API` is read as a one-version backward-compat shim. **Never put the token in an env var** - the CLI only accepts `--token` or the credentials file, by design (avoid ambient secrets in shells). On first run an existing `~/.quay/` dir is migrated to `~/.arcops/` automatically (the legacy dir is left as a backup).
 
-## Cold start (new org -> first data)
+## Cold start (invite code -> first data)
 
-The CLI is the read/send surface; provisioning is server-side. A brand-new organization goes from zero to first data in four steps:
+Onboarding is invite-gated and self-service: given a valid invite code you provision your own org and mint your own key over public routes — no admin hand-off, no DB access, no server-side scripts. The CLI is the read/send surface; account/org/key creation happens against the Arcops server auth API (`https://arcops.cc`). Five steps, invite code in hand:
 
-1. **Provision the org and a site (server-side).** An admin creates the organization and adds a site (domain) in the Arcops server. There is no CLI verb to create an org or connect a site today - see the server repo (`arcolabs/arcops-server`).
-2. **Mint an org-scoped API key (server-side).** The admin mints a Better Auth API key at one of `read` / `write` / `send` via `/api/auth/api-keys` (org-scoped; optionally constrained to a single site). The plaintext key is shown once - copy it exactly, do not assume a prefix. Legacy `ts_…` tokens are still accepted via dual-read but are no longer issued. The CLI never creates keys.
-3. **Install + authenticate (CLI).**
+1. **Get an invite code.** An org admin issues one with `arcops invite create --org-name "<Your Org>"` (needs a `write`-scope key with invite-admin rights; see [Invite administration](#invite-administration)). `--org-name` provisions a **new org on redeem** and makes the redeemer its owner — required for cold start. The plaintext code is shown once. (A code minted without `--org-name` only creates a user, no org — you would have nothing to see.)
+
+2. **Sign up with the code** — creates your account **and** your org, and returns a Better Auth session. No CLI verb for signup yet; use the auth API directly (or the browser signup page at `https://arcops.cc/login?invite=<code>`):
+   ```bash
+   curl -sS -c cookies.txt https://arcops.cc/api/auth/sign-up/email \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"you@example.com","password":"<password>","name":"You","inviteCode":"<code>"}'
+   ```
+   `200` on success; the session is saved to `cookies.txt` and the invite auto-provisions your org.
+
+3. **Mint an org-scoped API key** with that session:
+   ```bash
+   curl -sS -b cookies.txt https://arcops.cc/api/auth/api-keys \
+     -H 'Content-Type: application/json' \
+     -d '{"name":"arcops-cli"}'
+   ```
+   `201` returns the key; copy its plaintext value **exactly once** — it is not shown again. Do not assume a prefix (newly issued keys are org-scoped Better Auth keys, not `ts_…`).
+
+4. **Install + authenticate (CLI).**
    ```bash
    npm install -g @arcolab/arcops
    arcops auth login --token <api-key>   # saved to ~/.arcops/credentials.json
    arcops auth status --output json      # { authenticated, api, site_count }
    ```
-4. **See first data.**
+
+5. **See first data.** A brand-new org has no site yet, so `site ls` is empty until you add one (site creation is being productized as a CLI verb — until then it is a server-side step).
    ```bash
-   arcops site ls --output json          # confirm the new site is visible
-   arcops revenue <site> --days 30       # Stripe revenue (may be empty pre-integration)
-   arcops inbox ls <site> --status open  # postmaster inbox
+   arcops site ls --output json          # [] for a fresh org; lists your sites once added
+   arcops revenue <site> --days 30       # Stripe revenue (empty pre-integration)
+   arcops traffic <site> --days 7        # first-party analytics
    arcops verbs --json                   # full capability catalog
    ```
 
 `<site>` may be the exact domain, a numeric site id, or a unique substring; the CLI resolves it and errors on ambiguity.
+
+> Legacy `ts_…` tokens minted server-side are still accepted via dual-read but are no longer issued; the invite flow above is the supported path for new orgs.
 
 ## Agent-first contract
 

@@ -11,7 +11,18 @@ npm install -g @arcolab/arcops
 arcops auth login --token <api-key>
 ```
 
-Requires Node 20+. API keys are minted server-side at one of three scopes - `read`, `write`, `send` - and never created by the CLI. As of the S7 migration, newly issued keys are org-scoped Better Auth API keys; legacy `ts_…` tokens are still accepted via dual-read. The default API is `https://arcops.cc` (override with `--api` or `ARCOPS_API`).
+Requires Node 20+. The default API is `https://arcops.cc` (override with `--api` or `ARCOPS_API`).
+
+## New here? (invite -> first data)
+
+Onboarding is invite-gated and self-service. With a valid invite code you provision your own org and mint your own key over public routes — no admin hand-off. Full walkthrough (with the exact request shapes) is the **Cold start** section of [`SKILL.md`](./SKILL.md); the short version:
+
+1. Get an invite code — an admin runs `arcops invite create --org-name "<Your Org>"` (the `--org-name` code provisions a new org on redeem).
+2. Sign up with the code: `POST https://arcops.cc/api/auth/sign-up/email` with `{email, password, name, inviteCode}` (or the browser page `https://arcops.cc/login?invite=<code>`) — creates your account + org and returns a session.
+3. Mint an org-scoped API key with that session: `POST https://arcops.cc/api/auth/api-keys` — copy the plaintext key once.
+4. `arcops auth login --token <api-key>` — then `arcops site ls`, `revenue`, `traffic`, `verbs`.
+
+API keys are org-scoped Better Auth keys minted at one of three scopes — `read`, `write`, `send` — and are never created by the CLI (legacy `ts_…` tokens are still accepted via dual-read but no longer issued).
 
 ## Agent reference
 
@@ -30,4 +41,4 @@ bun run typecheck    # tsc --noEmit (must pass before commit)
 bun run gen:skill    # regenerate SKILL.md verb reference from the registry
 ```
 
-Project notes (architecture, two-repo workflow, gotchas) are in [`AGENTS.md`](./AGENTS.md).
+Project notes (architecture, two-repo workflow, gotchas) are in [`AGENTS.md`](https://github.com/arcolabs/arcops/blob/main/AGENTS.md) (repo-only; not shipped in the npm package).
