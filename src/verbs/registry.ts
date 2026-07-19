@@ -182,6 +182,35 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
   {
+    id: 'site:move',
+    name: 'Move site between orgs',
+    summary: 'Move a site to another organization (human-admin only)',
+    description:
+      'Re-homes a site (and its site-level integrations) to another organization via the ' +
+      'public site-move endpoint (arcops-server #23 / KEH-161). The server requires an ' +
+      'IDENTIFIED HUMAN admin: a ts_ token bridged to a Better Auth user who is owner/admin ' +
+      'of BOTH the source and target orgs. Org-scoped BA api-keys are refused with 403 ' +
+      'move_requires_human_admin (no personal identity to prove dual-admin) - so this verb ' +
+      'uses the normal `arcops auth login` human token, not an org-scoped key. Everything ' +
+      'keyed by site_id alone (analytics, Stripe, GSC) follows the site automatically; ' +
+      'outbound_events history stays attributed to the emitting org. The response reports ' +
+      'retired_site_keys: source-org BA keys constrained to this site that are now inert ' +
+      '(org mismatch fails closed) - re-issue them under the target org. Not idempotent: a ' +
+      'retry after a successful move 422s (already_in_org) or 404s (cross-org from the ' +
+      'source token). Gated by a typed confirm (site domain) unless --yes is passed.',
+    scope: 'write',
+    idempotent: false,
+    args: [
+      { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain (must be in your org).' },
+      { name: 'to_org', cliName: 'to-org', type: 'string', required: true, description: 'Target organization slug or id (you must be owner/admin).' },
+      { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip the typed confirmation.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['site move acme.com --to-org wodex --yes'],
+    http: { method: 'POST', path: '/api/sites/:siteId/move', body: ['target_org'] },
+    outputShape: 'unknown',
+  },
+  {
     id: 'directory:ls',
     name: 'List directory catalog',
     summary: 'List the global directory catalog',
