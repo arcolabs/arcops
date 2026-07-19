@@ -3,7 +3,9 @@
 // KEH-179 (INV-2) - invite-code administration. These verbs hit the server's
 // invite-admin wrap routes (arcops-server PR #29), which gate on
 // `withAuthOrToken` + invite-admin membership (owner/admin of
-// INVITE_ADMIN_ORG_SLUG, or a BA key scoped to that org). The plugin's own
+// INVITE_ADMIN_ORG_SLUG, verified per-request; BA api-keys are REJECTED -
+// a BA key has no attributable creator, so no per-user role check is
+// possible; server-side CEO option C, 2026-07-19). The plugin's own
 // admin endpoints are session-cookie authed and unreachable by the CLI's
 // Bearer token - the wrap is why this surface exists.
 //
