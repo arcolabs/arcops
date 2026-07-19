@@ -20,6 +20,7 @@ import { VERBS } from '../verbs/registry';
 import { renderVerbHelp } from '../dispatch';
 
 const MOVE_ID = 'site:move';
+const CREATE_ID = 'site:create';
 
 // ── Contract: registry + catalog + help ────────────────────────────────
 test('site:move is registered in the registry and the legacy catalog', () => {
@@ -60,6 +61,44 @@ test('site move --help surfaces the human-admin requirement + --to-org', () => {
   expect(help).toContain('--yes');
   // First example renders as a runnable line naming the verb.
   expect(help).toContain('$ arcops site move acme.com --to-org wodex --yes');
+});
+
+// ── site:create contract (KEH-191) ─────────────────────────────────────
+test('site:create is registered in the registry and the legacy catalog', () => {
+  expect(VERBS.find((v) => v.id === CREATE_ID), `registry verb ${CREATE_ID}`).toBeDefined();
+  expect(COMMANDS.find((c) => c.path.join(':') === CREATE_ID), `legacy command ${CREATE_ID}`).toBeDefined();
+});
+
+test('site:create maps to the collection POST endpoint', () => {
+  const v = VERBS.find((v) => v.id === CREATE_ID)!;
+  expect(v.http).toEqual({ method: 'POST', path: '/api/sites', body: ['domain', 'name'] });
+  expect(v.scope).toBe('write');
+  expect(v.idempotent).toBe(false);
+  // Not a send-class verb -> no idempotency key.
+  expect(v.supportsIdempotencyKey ?? false).toBe(false);
+});
+
+test('site:create flags + positional bind correctly', () => {
+  const cmd = COMMANDS.find((c) => c.path.join(' ') === 'site create')!;
+  expect(cmd.positional?.map((p) => (typeof p === 'string' ? p : p.name))).toEqual(['domain']);
+  const flagNames = (cmd.flags ?? []).map((f) => (typeof f === 'string' ? f : f.name));
+  expect(flagNames).toContain('--name');
+  expect(flagNames).toContain('--output');
+  // domain is the required positional; name is optional (defaults to domain).
+  const v = VERBS.find((v) => v.id === CREATE_ID)!;
+  expect(v.args.find((a) => a.name === 'domain')?.required).toBe(true);
+  expect(v.args.find((a) => a.name === 'domain')?.positional).toBe(true);
+  expect(v.args.find((a) => a.name === 'name')?.required ?? false).toBe(false);
+});
+
+test('site create --help surfaces the [write] scope badge + --name + example', () => {
+  const gen = DISPATCH_COMMANDS.find((c) => c.path.join(' ') === 'site create')!;
+  expect(gen.scope).toBe('write');
+  const help = renderVerbHelp(gen);
+  expect(help).toContain('[write]');
+  expect(help).toContain('--name');
+  // First example renders as a runnable line naming the verb.
+  expect(help).toContain('$ arcops site create acme.com');
 });
 
 // ── Handler behavior: real local server + subprocess CLI ───────────────
@@ -273,6 +312,111 @@ describe('site move handler (KEH-188)', () => {
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('move_requires_human_admin');
       expect(String(env.error.message)).toContain('403');
+    } finally {
+      await stop();
+    }
+  });
+});
+
+const CREATED_SITE = { id: 9, domain: 'acme.com', name: 'Acme', org_id: 'org-1', created_at: '2026-07-20T00:00:00Z' };
+
+describe('site create handler (KEH-191)', () => {
+  test('--output json: POSTs { domain, name } to /api/sites, pure site object on stdout', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-'));
+    const posts: { body: any }[] = [];
+    const { base, stop } = await mockServer([
+      async (req, url) => {
+        if (req.method === 'POST' && url.pathname === '/api/sites') {
+          posts.push({ body: await req.json() });
+          return json({ site: CREATED_SITE }, 201);
+        }
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'create', 'acme.com', '--name', 'Acme', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      // Pure data on stdout: the created site object, unwrapped, no success tick.
+      expect(JSON.parse(stdout)).toEqual(CREATED_SITE);
+      expect(stderr).toBe('');
+      expect(posts).toHaveLength(1);
+      expect(posts[0].body).toEqual({ domain: 'acme.com', name: 'Acme' });
+    } finally {
+      await stop();
+    }
+  });
+
+  test('--name omitted: name defaults to the domain', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-noname-'));
+    const posts: { body: any }[] = [];
+    const { base, stop } = await mockServer([
+      async (req, url) => {
+        if (req.method === 'POST' && url.pathname === '/api/sites') {
+          posts.push({ body: await req.json() });
+          return json({ site: { ...CREATED_SITE, name: 'acme.com' } }, 201);
+        }
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'create', 'acme.com', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      expect(posts).toHaveLength(1);
+      expect(posts[0].body).toEqual({ domain: 'acme.com', name: 'acme.com' });
+      expect(JSON.parse(stdout).name).toBe('acme.com');
+    } finally {
+      await stop();
+    }
+  });
+
+  test('missing domain positional exits 2 before any POST', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-nodomain-'));
+    const posts: number[] = [];
+    const { base, stop } = await mockServer([
+      (req, url) => {
+        if (req.method === 'POST' && url.pathname === '/api/sites') posts.push(1);
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stderr } = await runCli(
+        ['site', 'create', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code).toBe(2);
+      expect(stderr).toContain('domain argument required');
+      expect(posts).toHaveLength(0);
+    } finally {
+      await stop();
+    }
+  });
+
+  test('surfaces the server structured error (409 duplicate), exit 1', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-409-'));
+    const { base, stop } = await mockServer([
+      (req, url) => {
+        if (req.method === 'POST' && url.pathname === '/api/sites') {
+          return json({ error: 'Site with this domain already exists' }, 409);
+        }
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'create', 'acme.com', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      // Agent-first error contract: structured envelope on stderr, no stdout.
+      expect(code).toBe(1);
+      expect(stdout).toBe('');
+      const env = JSON.parse(stderr);
+      expect(String(env.error.message)).toContain('409');
     } finally {
       await stop();
     }

@@ -182,6 +182,30 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
   {
+    id: 'site:create',
+    name: 'Create site',
+    summary: 'Create a site in your org',
+    description:
+      'Creates a site in the caller\'s organization via the public collection endpoint ' +
+      '(POST /api/sites). The server stamps org_id from the request\'s tenant context (never ' +
+      'from input), normalizes the domain (strips scheme + trailing slash), and returns the ' +
+      'created site (id, domain, name, org_id). A duplicate domain in the same org is refused ' +
+      'with 409. --name is an optional display label; when omitted it defaults to the domain, ' +
+      'so `arcops site create acme.com` works as a one-arg command. This is step 1 of the ' +
+      'product value path ("connect your first site"). Note: this only creates the site row; ' +
+      'wiring a data source (Stripe key / GSC) is a separate step.',
+    scope: 'write',
+    idempotent: false,
+    args: [
+      { name: 'domain', type: 'string', required: true, positional: true, description: 'New site domain (e.g. acme.com).' },
+      { name: 'name', type: 'string', description: 'Display name for the site (defaults to the domain).' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['site create acme.com', 'site create acme.com --name Acme'],
+    http: { method: 'POST', path: '/api/sites', body: ['domain', 'name'] },
+    outputShape: 'unknown',
+  },
+  {
     id: 'site:move',
     name: 'Move site between orgs',
     summary: 'Move a site to another organization (human-admin only)',
