@@ -165,6 +165,14 @@ export function renderVerbHelp(cmd: CommandDef): string {
   out.push(`${title} - ${cmd.summary}${scopeTag}`);
   out.push('');
 
+  // KEH-179: longer prose (e.g. invite form limits) shown prominently under the
+  // title. Only generated commands with a `description` render this section.
+  if (cmd.description) {
+    out.push('Details:');
+    out.push(cmd.description);
+    out.push('');
+  }
+
   const posPart = (cmd.positional ?? []).map((p) => `<${positionalName(p)}>`).join(' ');
   out.push(`Usage: ${title}${posPart ? ' ' + posPart : ''} [flags]`);
   out.push('');

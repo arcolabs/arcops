@@ -724,6 +724,79 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
 
+  // ── Invite administration (KEH-179 / INV-2) ───────────────────────────
+  // Hits the server's invite-admin wrap routes (arcops-server PR #29), which
+  // gate on withAuthOrToken + invite-admin membership. The plugin's own admin
+  // endpoints are session-cookie authed and unreachable by the CLI's Bearer
+  // token. The plaintext code is returned by the server ONLY at create time.
+  {
+    id: 'invite:create',
+    name: 'Create invite code',
+    summary: 'Create an invite code (plaintext shown once)',
+    description:
+      'Codes are single-use per email by default. v1 form limits: ' +
+      '(1) max-uses>1 is bound to the invitation email - only that address can ' +
+      'spend the uses on the email signup path (others get EMAIL_MISMATCH), so ' +
+      'multi-use is only meaningful for repeated signups of the SAME email; ' +
+      '(2) the OAuth redeem path does NOT enforce email binding - whoever holds ' +
+      'the invite cookie consumes the code. --org-name provisions a new org on ' +
+      'redeem (redeemer becomes owner); omit it for a user-only code.',
+    scope: 'write',
+    idempotent: false,
+    args: [
+      { name: 'email', type: 'string', required: true, description: 'Invitee email (signup email must match on the email path).' },
+      { name: 'org_name', cliName: 'org-name', type: 'string', description: 'Org to provision on redeem (redeemer becomes owner). Omit for a user-only code.' },
+      { name: 'max_uses', cliName: 'max-uses', type: 'number', description: 'Max redemptions (default 1). >1 is email-bound on the email path - see form limits.' },
+      { name: 'expires', type: 'string', description: 'Expiry: duration (30d, 12h, 45m) or ISO 8601. Default 7d.' },
+      { name: 'note', type: 'string', description: 'Operator note (stored in metadata; not shown to the invitee).' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['invite create --email jane@example.com --org-name "Acme Inc" --note "Q3 onboarding"'],
+    http: { method: 'POST', path: '/api/invites', body: ['email', 'org_name', 'max_uses', 'expires', 'note'] },
+    outputShape: 'unknown',
+  },
+  {
+    id: 'invite:ls',
+    name: 'List invite codes',
+    summary: 'List invite codes (code plaintext never shown)',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'status', type: 'string', description: 'Filter: pending|used|expired|revoked|all.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['invite ls', 'invite ls --status pending'],
+    http: { method: 'GET', path: '/api/invites', query: ['status'] },
+    outputShape: 'unknown',
+  },
+  {
+    id: 'invite:revoke',
+    name: 'Revoke invite code',
+    summary: 'Revoke an invite code (idempotent)',
+    scope: 'write',
+    idempotent: true,
+    args: [
+      { name: 'id', type: 'string', required: true, positional: true, description: 'Invitation id.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['invite revoke abc123'],
+    http: { method: 'DELETE', path: '/api/invites/:id' },
+    outputShape: 'unknown',
+  },
+  {
+    id: 'invite:stats',
+    name: 'Invite code stats',
+    summary: 'Aggregate invite-code counts by status',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['invite stats'],
+    http: { method: 'GET', path: '/api/invites/stats' },
+    outputShape: 'unknown',
+  },
+
   // ── Capability discovery (local; prints this registry) ──────────────
   {
     id: 'verbs',

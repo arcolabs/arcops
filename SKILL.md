@@ -267,6 +267,17 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | --- | --- | --- | --- |
 | `arcops audit ls` | `read` | remote | Show send/write scope operations for a site (what agents did) |
 
+### Invite administration
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops invite create` | `write` | remote | Create an invite code (plaintext shown once) |
+| `arcops invite ls` | `read` | remote | List invite codes (code plaintext never shown) |
+| `arcops invite revoke` | `write` | remote | Revoke an invite code (idempotent) |
+| `arcops invite stats` | `read` | remote | Aggregate invite-code counts by status |
+
+**`arcops invite create`**: Codes are single-use per email by default. v1 form limits: (1) max-uses>1 is bound to the invitation email - only that address can spend the uses on the email signup path (others get EMAIL_MISMATCH), so multi-use is only meaningful for repeated signups of the SAME email; (2) the OAuth redeem path does NOT enforce email binding - whoever holds the invite cookie consumes the code. --org-name provisions a new org on redeem (redeemer becomes owner); omit it for a user-only code.
+
 <!-- END VERB REFERENCE -->
 
 ## Capability discovery
