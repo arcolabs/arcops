@@ -35,6 +35,49 @@ export async function show(args: { site?: string; token?: string; api?: string; 
   printTable([siteData] as Record<string, unknown>[], Object.keys(siteData));
 }
 
+// Create a site in the caller's org. Drives the public collection endpoint
+// (arcops-server POST /api/sites { domain, name } -> 201 { site }). The server
+// stamps org_id from the request's tenant context (never from input), cleans
+// the domain (strips scheme + trailing slash), and 409s on a duplicate domain.
+// This is the first step of the product's value path ("connect your first
+// site") and the last CLI gap in the cold-start self-service loop (KEH-191).
+//
+// The server requires BOTH domain and name; the domain is the sole positional
+// and --name is an optional display label that defaults to the domain, so
+// `arcops site create acme.com` works as a one-arg command. A write-scope key
+// is required (mutation). On success the created site object is emitted as pure
+// data on stdout; server errors flow through the standard structured envelope.
+export async function create(args: {
+  domain?: string;
+  name?: string;
+  token?: string;
+  api?: string;
+  output?: string;
+}) {
+  const auth = resolveAuth(args);
+  if (!args.domain) {
+    error('domain argument required (the new site domain, e.g. acme.com)');
+    process.exit(2);
+  }
+
+  const name = args.name ?? args.domain;
+
+  const { site } = await apiPost<{
+    site: { id: number; domain: string; name: string; org_id: string; created_at: string };
+  }>('/api/sites', {
+    api: auth.api,
+    token: auth.token,
+    body: { domain: args.domain, name },
+  });
+
+  const fmt = detectOutputFormat(args.output);
+  if (fmt === 'json') return printJson(site);
+
+  success(`Created site ${site.domain} (id ${site.id})`);
+  info(`name:   ${site.name}`);
+  info(`org_id: ${site.org_id}`);
+}
+
 // Move a site to another organization. Drives the server's public site-move
 // endpoint (arcops-server #23 / KEH-161): POST /api/sites/:id/move
 // { target_org }. The server requires an IDENTIFIED HUMAN admin - a ts_ token

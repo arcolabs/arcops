@@ -82,13 +82,17 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
    arcops auth status --output json      # { authenticated, api, site_count }
    ```
 
-5. **See first data.** A brand-new org has no site yet, so `site ls` is empty until you add one (site creation is being productized as a CLI verb — until then it is a server-side step).
+5. **Create your first site and see data.** A brand-new org has no site yet, so create one, then install the `/t.js` collect snippet on that domain and watch first-party analytics flow in.
    ```bash
-   arcops site ls --output json          # [] for a fresh org; lists your sites once added
-   arcops revenue <site> --days 30       # Stripe revenue (empty pre-integration)
-   arcops traffic <site> --days 7        # first-party analytics
-   arcops verbs --json                   # full capability catalog
+   arcops site create acme.com --output json   # 201 -> the created site (id, domain, org_id)
+   # add the tracking snippet to your site's <head> (see `arcops site show <site>` / your dashboard),
+   # then check first value:
+   arcops site ls --output json                # your new site now listed
+   arcops traffic acme.com --days 7            # first-party analytics once the snippet is live
+   arcops revenue acme.com --days 30           # Stripe revenue (empty until you connect a key)
+   arcops verbs --json                         # full capability catalog
    ```
+   `--name` is optional (defaults to the domain); pass it for a friendlier display label.
 
 `<site>` may be the exact domain, a numeric site id, or a unique substring; the CLI resolves it and errors on ambiguity.
 
@@ -206,9 +210,11 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops site show` | `read` | remote | Show a single site |
 | `arcops site profile` | `read` | remote | Show the site marketing profile |
 | `arcops site submissions` | `read` | remote | Show directory submission status (with tracked UTM URLs) |
+| `arcops site create` | `write` | remote | Create a site in your org |
 | `arcops site move` | `write` | remote | Move a site to another organization (human-admin only) |
 | `arcops directory ls` | `read` | remote | List the global directory catalog |
 
+**`arcops site create`**: Creates a site in the caller's organization via the public collection endpoint (POST /api/sites). The server stamps org_id from the request's tenant context (never from input), normalizes the domain (strips scheme + trailing slash), and returns the created site (id, domain, name, org_id). A duplicate domain in the same org is refused with 409. --name is an optional display label; when omitted it defaults to the domain, so `arcops site create acme.com` works as a one-arg command. This is step 1 of the product value path ("connect your first site"). Note: this only creates the site row; wiring a data source (Stripe key / GSC) is a separate step.
 **`arcops site move`**: Re-homes a site (and its site-level integrations) to another organization via the public site-move endpoint (arcops-server #23 / KEH-161). The server requires an IDENTIFIED HUMAN admin: a ts_ token bridged to a Better Auth user who is owner/admin of BOTH the source and target orgs. Org-scoped BA api-keys are refused with 403 move_requires_human_admin (no personal identity to prove dual-admin) - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Everything keyed by site_id alone (analytics, Stripe, GSC) follows the site automatically; outbound_events history stays attributed to the emitting org. The response reports retired_site_keys: source-org BA keys constrained to this site that are now inert (org mismatch fails closed) - re-issue them under the target org. Not idempotent: a retry after a successful move 422s (already_in_org) or 404s (cross-org from the source token). Gated by a typed confirm (site domain) unless --yes is passed.
 
 ### Analytics
