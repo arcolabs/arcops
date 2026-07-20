@@ -5,14 +5,14 @@ import { resolveSiteOrExit } from '../lib/site-resolve';
 import { confirmByTyping } from '../lib/confirm';
 import { embedSnippet } from '../lib/embed';
 
-type SiteRow = { id: number; domain: string; name: string; createdAt: string };
+type SiteRow = { id: number; domain: string; name: string; created_at: string };
 
 export async function ls(args: { token?: string; api?: string; output?: string }) {
   const auth = resolveAuth(args);
   const { sites } = await apiGet<{ sites: SiteRow[] }>('/api/sites', auth);
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(sites);
-  printTable(sites, ['id', 'domain', 'name', 'createdAt']);
+  printTable(sites, ['id', 'domain', 'name', 'created_at']);
 }
 
 export async function show(args: { site?: string; token?: string; api?: string; output?: string }) {
@@ -68,19 +68,36 @@ export async function create(args: {
 
   const name = args.name ?? args.domain;
 
-  const { site } = await apiPost<{
-    site: { id: number; domain: string; name: string; org_id: string; created_at: string };
+  // The server's POST /api/sites returns the raw Drizzle sites row, so fields
+  // arrive camelCase (userId/orgId/createdAt + null secret ciphertext columns)
+  // - unlike ls/show, whose server-side projections are snake_case (KEH-202).
+  // Re-project here to the shared snake_case shape so one jq path works across
+  // every site verb; this also keeps the row's ciphertext columns (stripeSecretKey
+  // et al., null on a fresh site) out of stdout, matching presentSite's intent.
+  const { site: row } = await apiPost<{
+    site: {
+      id: number; domain: string; name: string;
+      userId: number | null; orgId: string; createdAt: string;
+    };
   }>('/api/sites', {
     api: auth.api,
     token: auth.token,
     body: { domain: args.domain, name },
   });
 
+  const site = {
+    id: row.id,
+    domain: row.domain,
+    name: row.name,
+    org_id: row.orgId,
+    created_at: row.createdAt,
+  };
+
   const snippet = embedSnippet(auth.api, site.id);
   const fmt = detectOutputFormat(args.output);
-  // JSON mode adds `embedSnippet` (camelCase, matching this verb's response
+  // JSON mode adds `embed_snippet` (snake_case, matching the site-verb response
   // convention - KEH-202) so the tracking tag is machine-readable on stdout.
-  if (fmt === 'json') return printJson({ ...site, embedSnippet: snippet });
+  if (fmt === 'json') return printJson({ ...site, embed_snippet: snippet });
 
   success(`Created site ${site.domain} (id ${site.id})`);
   info(`name:   ${site.name}`);

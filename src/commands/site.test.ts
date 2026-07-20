@@ -318,7 +318,27 @@ describe('site move handler (KEH-188)', () => {
   });
 });
 
-const CREATED_SITE = { id: 9, domain: 'acme.com', name: 'Acme', org_id: 'org-1', created_at: '2026-07-20T00:00:00Z' };
+// The server's POST /api/sites returns the raw Drizzle sites row - camelCase
+// keys plus null secret ciphertext columns (KEH-202). The CLI re-projects this
+// to the snake_case shape shared with site ls/show before printing.
+const CREATED_SITE_ROW = {
+  id: 9,
+  userId: 42,
+  orgId: 'org-1',
+  domain: 'acme.com',
+  name: 'Acme',
+  createdAt: '2026-07-20T00:00:00Z',
+  stripeSecretKey: null,
+  stripeWebhookSecret: null,
+  archivedAt: null,
+};
+const CREATED_SITE_JSON = {
+  id: 9,
+  domain: 'acme.com',
+  name: 'Acme',
+  org_id: 'org-1',
+  created_at: '2026-07-20T00:00:00Z',
+};
 
 describe('site create handler (KEH-191)', () => {
   test('--output json: POSTs { domain, name } to /api/sites, pure site object on stdout', async () => {
@@ -328,7 +348,7 @@ describe('site create handler (KEH-191)', () => {
       async (req, url) => {
         if (req.method === 'POST' && url.pathname === '/api/sites') {
           posts.push({ body: await req.json() });
-          return json({ site: CREATED_SITE }, 201);
+          return json({ site: CREATED_SITE_ROW }, 201);
         }
         return undefined;
       },
@@ -339,11 +359,13 @@ describe('site create handler (KEH-191)', () => {
         { HOME: home },
       );
       expect(code, `stderr: ${stderr}`).toBe(0);
-      // Pure data on stdout: the created site object, unwrapped, no success tick -
-      // plus the site's tracking embed tag (KEH-201), derived from the --api base.
+      // Pure data on stdout: the created site re-projected to snake_case (the
+      // shape shared with site ls/show - KEH-202), unwrapped, no success tick -
+      // plus the site's tracking embed tag (KEH-201), derived from the --api
+      // base. The raw row's camelCase/ciphertext columns must not leak through.
       expect(JSON.parse(stdout)).toEqual({
-        ...CREATED_SITE,
-        embedSnippet: `<script src="${base}/t.js" data-site="9" defer></script>`,
+        ...CREATED_SITE_JSON,
+        embed_snippet: `<script src="${base}/t.js" data-site="9" defer></script>`,
       });
       expect(stderr).toBe('');
       expect(posts).toHaveLength(1);
@@ -357,7 +379,7 @@ describe('site create handler (KEH-191)', () => {
     const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-text-'));
     const { base, stop } = await mockServer([
       (req, url) => {
-        if (req.method === 'POST' && url.pathname === '/api/sites') return json({ site: CREATED_SITE }, 201);
+        if (req.method === 'POST' && url.pathname === '/api/sites') return json({ site: CREATED_SITE_ROW }, 201);
         return undefined;
       },
     ]);
@@ -381,7 +403,7 @@ describe('site create handler (KEH-191)', () => {
       async (req, url) => {
         if (req.method === 'POST' && url.pathname === '/api/sites') {
           posts.push({ body: await req.json() });
-          return json({ site: { ...CREATED_SITE, name: 'acme.com' } }, 201);
+          return json({ site: { ...CREATED_SITE_ROW, name: 'acme.com' } }, 201);
         }
         return undefined;
       },
