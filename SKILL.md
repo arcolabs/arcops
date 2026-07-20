@@ -67,13 +67,21 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
    ```
    `200` on success; the session is saved to `cookies.txt` and the invite auto-provisions your org.
 
+   **Already have an account?** (returning user, fresh terminal, or a re-run — sign-up with an existing email fails with `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`.) Sign in instead; no invite code needed:
+   ```bash
+   curl -sS -c cookies.txt https://arcops.cc/api/auth/sign-in/email \
+     -H 'Content-Type: application/json' \
+     -d '{"email":"you@example.com","password":"<password>"}'
+   ```
+   `200` returns `{"token": "...", "user": {...}}` and saves the session cookie to `cookies.txt` — continue at step 3. Wrong credentials return `401` (`INVALID_EMAIL_OR_PASSWORD`).
+
 3. **Mint an org-scoped API key** with that session:
    ```bash
    curl -sS -b cookies.txt https://arcops.cc/api/auth/api-keys \
      -H 'Content-Type: application/json' \
-     -d '{"name":"arcops-cli"}'
+     -d '{"name":"arcops-cli","scope":"write"}'
    ```
-   `201` returns the key; copy its plaintext value **exactly once** — it is not shown again. Do not assume a prefix (newly issued keys are org-scoped Better Auth keys, not `ts_…`).
+   `scope` is **required** — one of the three tiers from the table above (`read` / `write` / `send`); omitting it returns `422 {"error":"scope must be read|write|send"}`. Cold start needs `write`: step 5's `site create` is a write verb. `201` returns the key at `apiKey.key`; copy its plaintext value **exactly once** — it is not shown again. Do not assume a prefix (newly issued keys are org-scoped Better Auth keys, not `ts_…`).
 
 4. **Install + authenticate (CLI).**
    ```bash
@@ -84,15 +92,18 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
 
 5. **Create your first site and see data.** A brand-new org has no site yet, so create one, then install the `/t.js` collect snippet on that domain and watch first-party analytics flow in.
    ```bash
-   arcops site create acme.com --output json   # 201 -> the created site (id, domain, org_id)
-   # add the tracking snippet to your site's <head> (see `arcops site show <site>` / your dashboard),
-   # then check first value:
+   arcops site create acme.com --output json   # 201 -> the created site + its embed tag
+   # the create/show output includes the tracking snippet (embedSnippet in JSON,
+   # an `embed:` line in text) — paste it into your site's <head>:
+   #   <script src="https://arcops.cc/t.js" data-site="<id>" defer></script>
+   arcops site show acme.com --output json     # .embed_snippet reprints the tag anytime
+   # once the snippet is live, check first value:
    arcops site ls --output json                # your new site now listed
    arcops traffic acme.com --days 7            # first-party analytics once the snippet is live
    arcops revenue acme.com --days 30           # Stripe revenue (empty until you connect a key)
    arcops verbs --json                         # full capability catalog
    ```
-   `--name` is optional (defaults to the domain); pass it for a friendlier display label.
+   `--name` is optional (defaults to the domain); pass it for a friendlier display label. The snippet's `data-site` is the numeric site id; the collector script reads it and POSTs pageviews to `/api/collect`.
 
 `<site>` may be the exact domain, a numeric site id, or a unique substring; the CLI resolves it and errors on ambiguity.
 
@@ -214,7 +225,8 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops site move` | `write` | remote | Move a site to another organization (human-admin only) |
 | `arcops directory ls` | `read` | remote | List the global directory catalog |
 
-**`arcops site create`**: Creates a site in the caller's organization via the public collection endpoint (POST /api/sites). The server stamps org_id from the request's tenant context (never from input), normalizes the domain (strips scheme + trailing slash), and returns the created site (id, domain, name, org_id). A duplicate domain in the same org is refused with 409. --name is an optional display label; when omitted it defaults to the domain, so `arcops site create acme.com` works as a one-arg command. This is step 1 of the product value path ("connect your first site"). Note: this only creates the site row; wiring a data source (Stripe key / GSC) is a separate step.
+**`arcops site show`**: Shows a single site (id, domain, integration fields) plus `embed_snippet`: the copy-pasteable first-party tracking tag `<script src="<api>/t.js" data-site="<id>" defer></script>` for the site's <head> (KEH-201). The collector script reads `data-site` and POSTs pageviews/events to /api/collect; the snippet src follows the resolved API base (`--api` / ARCOPS_API).
+**`arcops site create`**: Creates a site in the caller's organization via the public collection endpoint (POST /api/sites). The server stamps org_id from the request's tenant context (never from input), normalizes the domain (strips scheme + trailing slash), and returns the created site (id, domain, name, org_id). A duplicate domain in the same org is refused with 409. --name is an optional display label; when omitted it defaults to the domain, so `arcops site create acme.com` works as a one-arg command. This is step 1 of the product value path ("connect your first site"). The success output includes the site's tracking embed tag (`embedSnippet` in JSON, an `embed:` line in text; KEH-201) - paste it into the site's <head> to start first-party collection. Note: this only creates the site row; wiring a data source (Stripe key / GSC) is a separate step.
 **`arcops site move`**: Re-homes a site (and its site-level integrations) to another organization via the public site-move endpoint (arcops-server #23 / KEH-161). The server requires an IDENTIFIED HUMAN admin: a ts_ token bridged to a Better Auth user who is owner/admin of BOTH the source and target orgs. Org-scoped BA api-keys are refused with 403 move_requires_human_admin (no personal identity to prove dual-admin) - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Everything keyed by site_id alone (analytics, Stripe, GSC) follows the site automatically; outbound_events history stays attributed to the emitting org. The response reports retired_site_keys: source-org BA keys constrained to this site that are now inert (org mismatch fails closed) - re-issue them under the target org. Not idempotent: a retry after a successful move 422s (already_in_org) or 404s (cross-org from the source token). Gated by a typed confirm (site domain) unless --yes is passed.
 
 ### Analytics

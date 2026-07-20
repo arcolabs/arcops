@@ -339,11 +339,36 @@ describe('site create handler (KEH-191)', () => {
         { HOME: home },
       );
       expect(code, `stderr: ${stderr}`).toBe(0);
-      // Pure data on stdout: the created site object, unwrapped, no success tick.
-      expect(JSON.parse(stdout)).toEqual(CREATED_SITE);
+      // Pure data on stdout: the created site object, unwrapped, no success tick -
+      // plus the site's tracking embed tag (KEH-201), derived from the --api base.
+      expect(JSON.parse(stdout)).toEqual({
+        ...CREATED_SITE,
+        embedSnippet: `<script src="${base}/t.js" data-site="9" defer></script>`,
+      });
       expect(stderr).toBe('');
       expect(posts).toHaveLength(1);
       expect(posts[0].body).toEqual({ domain: 'acme.com', name: 'Acme' });
+    } finally {
+      await stop();
+    }
+  });
+
+  test('text mode: success tick + embed tag on stderr, nothing on stdout', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-text-'));
+    const { base, stop } = await mockServer([
+      (req, url) => {
+        if (req.method === 'POST' && url.pathname === '/api/sites') return json({ site: CREATED_SITE }, 201);
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'create', 'acme.com', '--name', 'Acme', '--output', 'text', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      expect(stdout).toBe('');
+      expect(stderr).toContain(`embed:  <script src="${base}/t.js" data-site="9" defer></script>`);
     } finally {
       await stop();
     }
@@ -417,6 +442,55 @@ describe('site create handler (KEH-191)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(String(env.error.message)).toContain('409');
+    } finally {
+      await stop();
+    }
+  });
+});
+
+// ── site show handler: embed snippet (KEH-201) ─────────────────────────
+const SHOW_SITE = { id: 42, domain: 'acme.com', name: 'Acme', org_id: 'org-1', created_at: '2026-07-20T00:00:00Z' };
+
+function showMockRoutes() {
+  return [
+    (req: Request, url: URL) => {
+      if (req.method === 'GET' && url.pathname === '/api/sites') return json(SITES_LIST);
+      if (req.method === 'GET' && url.pathname === '/api/sites/42') return json({ site: SHOW_SITE });
+      return undefined;
+    },
+  ];
+}
+
+describe('site show handler (KEH-201)', () => {
+  test('--output json: site object + embed_snippet derived from the --api base', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-show-'));
+    const { base, stop } = await mockServer(showMockRoutes());
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'show', 'acme.com', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      expect(JSON.parse(stdout)).toEqual({
+        ...SHOW_SITE,
+        embed_snippet: `<script src="${base}/t.js" data-site="42" defer></script>`,
+      });
+    } finally {
+      await stop();
+    }
+  });
+
+  test('text mode: table on stdout, embed tag on stderr', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-show-text-'));
+    const { base, stop } = await mockServer(showMockRoutes());
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'show', '42', '--output', 'text', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      expect(stdout).toContain('acme.com');
+      expect(stderr).toContain(`embed: <script src="${base}/t.js" data-site="42" defer></script>`);
     } finally {
       await stop();
     }

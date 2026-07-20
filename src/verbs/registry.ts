@@ -143,6 +143,12 @@ export const VERBS: VerbDef[] = [
     id: 'site:show',
     name: 'Show site',
     summary: 'Show a single site',
+    description:
+      'Shows a single site (id, domain, integration fields) plus `embed_snippet`: the ' +
+      'copy-pasteable first-party tracking tag `<script src="<api>/t.js" data-site="<id>" ' +
+      'defer></script>` for the site\'s <head> (KEH-201). The collector script reads ' +
+      '`data-site` and POSTs pageviews/events to /api/collect; the snippet src follows the ' +
+      'resolved API base (`--api` / ARCOPS_API).',
     scope: 'read',
     idempotent: true,
     args: [
@@ -192,8 +198,10 @@ export const VERBS: VerbDef[] = [
       'created site (id, domain, name, org_id). A duplicate domain in the same org is refused ' +
       'with 409. --name is an optional display label; when omitted it defaults to the domain, ' +
       'so `arcops site create acme.com` works as a one-arg command. This is step 1 of the ' +
-      'product value path ("connect your first site"). Note: this only creates the site row; ' +
-      'wiring a data source (Stripe key / GSC) is a separate step.',
+      'product value path ("connect your first site"). The success output includes the ' +
+      'site\'s tracking embed tag (`embedSnippet` in JSON, an `embed:` line in text; KEH-201) - ' +
+      'paste it into the site\'s <head> to start first-party collection. Note: this only ' +
+      'creates the site row; wiring a data source (Stripe key / GSC) is a separate step.',
     scope: 'write',
     idempotent: false,
     args: [

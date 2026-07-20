@@ -3,6 +3,7 @@ import { apiGet, apiPost } from '../api';
 import { detectOutputFormat, error, info, success, warn, printJson, printTable } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 import { confirmByTyping } from '../lib/confirm';
+import { embedSnippet } from '../lib/embed';
 
 type SiteRow = { id: number; domain: string; name: string; createdAt: string };
 
@@ -29,10 +30,14 @@ export async function show(args: { site?: string; token?: string; api?: string; 
     process.exit(1);
   }
   const { site: siteData } = await apiGet<{ site: Record<string, unknown> }>(`/api/sites/${site.id}`, auth);
+  const snippet = embedSnippet(auth.api, site.id);
   const fmt = detectOutputFormat(args.output);
-  if (fmt === 'json') return printJson(siteData);
+  // JSON mode adds `embed_snippet` (snake_case, matching this verb's response
+  // convention - KEH-202) so agents get the copy-pasteable tracking tag as data.
+  if (fmt === 'json') return printJson({ ...siteData, embed_snippet: snippet });
   // In text mode, print key fields
   printTable([siteData] as Record<string, unknown>[], Object.keys(siteData));
+  info(`embed: ${snippet}`);
 }
 
 // Create a site in the caller's org. Drives the public collection endpoint
@@ -46,7 +51,8 @@ export async function show(args: { site?: string; token?: string; api?: string; 
 // and --name is an optional display label that defaults to the domain, so
 // `arcops site create acme.com` works as a one-arg command. A write-scope key
 // is required (mutation). On success the created site object is emitted as pure
-// data on stdout; server errors flow through the standard structured envelope.
+// data on stdout (plus the site's tracking embed tag - KEH-201); server errors
+// flow through the standard structured envelope.
 export async function create(args: {
   domain?: string;
   name?: string;
@@ -70,12 +76,16 @@ export async function create(args: {
     body: { domain: args.domain, name },
   });
 
+  const snippet = embedSnippet(auth.api, site.id);
   const fmt = detectOutputFormat(args.output);
-  if (fmt === 'json') return printJson(site);
+  // JSON mode adds `embedSnippet` (camelCase, matching this verb's response
+  // convention - KEH-202) so the tracking tag is machine-readable on stdout.
+  if (fmt === 'json') return printJson({ ...site, embedSnippet: snippet });
 
   success(`Created site ${site.domain} (id ${site.id})`);
   info(`name:   ${site.name}`);
   info(`org_id: ${site.org_id}`);
+  info(`embed:  ${snippet}`);
 }
 
 // Move a site to another organization. Drives the server's public site-move
