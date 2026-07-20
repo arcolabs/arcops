@@ -19,6 +19,7 @@ import * as funnel from './funnel';
 import * as gsc from './gsc';
 import * as inbox from './inbox';
 import * as invite from './invite';
+import * as org from './org';
 import * as overview from './overview';
 import * as profile from './profile';
 import * as revenue from './revenue';
@@ -291,6 +292,16 @@ export const COMMANDS: CommandDef[] = [
     flags: ['--output'],
     examples: ['invite stats'],
     handler: (a) => invite.stats({ token: a.token, api: a.api, output: a.output }) },
+
+  // ── Organization administration (KEH-198; hits arcops-server #35 wrap routes) ──
+  { path: ['org', 'ls'], summary: 'List orgs you own or admin',
+    flags: ['--output'],
+    examples: ['org ls'],
+    handler: (a) => org.ls({ token: a.token, api: a.api, output: a.output }) },
+  { path: ['org', 'create'], summary: 'Create an org with you as owner (human-admin only)',
+    flags: ['--name', '--slug', '--output'],
+    examples: ['org create --name "Acme Inc"', 'org create --name "Acme Inc" --slug acme'],
+    handler: (a) => org.create({ name: a.name, slug: a.slug, token: a.token, api: a.api, output: a.output }) },
 ];
 
 // ── C2/KEH-150 Phase 2 coexistence (design §6.2) ──────────────────────

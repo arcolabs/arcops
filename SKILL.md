@@ -318,6 +318,16 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 
 **`arcops invite create`**: Codes are single-use per email by default. v1 form limits: (1) max-uses>1 is bound to the invitation email - only that address can spend the uses on the email signup path (others get EMAIL_MISMATCH), so multi-use is only meaningful for repeated signups of the SAME email; (2) the OAuth redeem path does NOT enforce email binding - whoever holds the invite cookie consumes the code. --org-name provisions a new org on redeem (redeemer becomes owner); omit it for a user-only code.
 
+### Organizations
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops org ls` | `read` | remote | List orgs you own or admin |
+| `arcops org create` | `write` | remote | Create an org with you as owner (human-admin only) |
+
+**`arcops org ls`**: Lists organizations where the caller is an owner or admin member via the org-admin wrap endpoint (GET /api/orgs, arcops-server #35 / KEH-197). The server requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better Auth user, or a browser/CF-Access session; org-scoped BA api-keys are refused with 403 org_admin_required (no attributable user to list orgs for) - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Cross-tenant safe by construction: the query JOINs on the caller's member rows, so a non-member's org is never returned (no existence leak); plain-member orgs are excluded - only orgs you own/admin appear. Returns id, name, slug, your role (owner/admin), and createdAt.
+**`arcops org create`**: Creates an organization with the caller as owner via the org-admin wrap endpoint (POST /api/orgs, arcops-server #35 / KEH-197). The server requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better Auth user, or a browser/CF-Access session; org-scoped BA api-keys are refused with 403 org_admin_required (no attributable creator to own the org), and a read-scope key is refused earlier with 403 insufficient_scope - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Reuses the better-auth organization plugin's own createOrganization (system-action mode), so the org is indistinguishable from one created in the UI. --name is required (1-100 chars); --slug is optional and must be lowercase letters, digits, and single hyphens between (e.g. my-org, <= 60 chars) - when omitted it is derived from the name (e.g. "My Org" -> my-org). A duplicate slug is refused with 409 org_already_exists; bad name/slug returns 422 invalid_input (with detail.field). Returns the created org (id, name, slug, your owner role, createdAt).
+
 <!-- END VERB REFERENCE -->
 
 ## Capability discovery

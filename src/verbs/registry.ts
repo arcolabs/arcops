@@ -858,6 +858,68 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
 
+  // ── Organizations (KEH-198; hits arcops-server #35 / KEH-197 wrap routes) ──
+  // The better-auth organization plugin's list/create endpoints are session-
+  // cookie authed (unreachable by the CLI's Bearer token - the KEH-188 wall);
+  // these wrap the same operations behind withAuthOrToken so the CLI can
+  // list/create orgs with its existing ts_ token. Human-admin only - org-scoped
+  // BA api-keys are refused with 403 org_admin_required (no attributable user).
+  {
+    id: 'org:ls',
+    name: 'List organizations',
+    summary: 'List orgs you own or admin',
+    description:
+      'Lists organizations where the caller is an owner or admin member via the ' +
+      'org-admin wrap endpoint (GET /api/orgs, arcops-server #35 / KEH-197). The ' +
+      'server requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better ' +
+      'Auth user, or a browser/CF-Access session; org-scoped BA api-keys are ' +
+      'refused with 403 org_admin_required (no attributable user to list orgs for) ' +
+      '- so this verb uses the normal `arcops auth login` human token, not an ' +
+      'org-scoped key. Cross-tenant safe by construction: the query JOINs on the ' +
+      'caller\'s member rows, so a non-member\'s org is never returned (no ' +
+      'existence leak); plain-member orgs are excluded - only orgs you own/admin ' +
+      'appear. Returns id, name, slug, your role (owner/admin), and createdAt.',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['org ls'],
+    http: { method: 'GET', path: '/api/orgs' },
+    outputShape: 'unknown',
+  },
+  {
+    id: 'org:create',
+    name: 'Create organization',
+    summary: 'Create an org with you as owner (human-admin only)',
+    description:
+      'Creates an organization with the caller as owner via the org-admin wrap ' +
+      'endpoint (POST /api/orgs, arcops-server #35 / KEH-197). The server ' +
+      'requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better Auth ' +
+      'user, or a browser/CF-Access session; org-scoped BA api-keys are refused ' +
+      'with 403 org_admin_required (no attributable creator to own the org), and ' +
+      'a read-scope key is refused earlier with 403 insufficient_scope - so this ' +
+      'verb uses the normal `arcops auth login` human token, not an org-scoped ' +
+      'key. Reuses the better-auth organization plugin\'s own createOrganization ' +
+      '(system-action mode), so the org is indistinguishable from one created in ' +
+      'the UI. --name is required (1-100 chars); --slug is optional and must be ' +
+      'lowercase letters, digits, and single hyphens between (e.g. my-org, <= 60 ' +
+      'chars) - when omitted it is derived from the name (e.g. "My Org" -> ' +
+      'my-org). A duplicate slug is refused with 409 org_already_exists; bad ' +
+      'name/slug returns 422 invalid_input (with detail.field). Returns the ' +
+      'created org (id, name, slug, your owner role, createdAt).',
+    scope: 'write',
+    idempotent: false,
+    args: [
+      { name: 'name', type: 'string', required: true, description: 'Organization display name (1-100 chars).' },
+      { name: 'slug', type: 'string', description: 'URL slug (lowercase, digits, single hyphens; <= 60 chars). Derived from --name when omitted.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['org create --name "Acme Inc"', 'org create --name "Acme Inc" --slug acme'],
+    http: { method: 'POST', path: '/api/orgs', body: ['name', 'slug'] },
+    outputShape: 'unknown',
+  },
+
   // ── Capability discovery (local; prints this registry) ──────────────
   {
     id: 'verbs',
