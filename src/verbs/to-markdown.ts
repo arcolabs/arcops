@@ -31,6 +31,7 @@ const CATEGORY_ORDER = [
   'Capability discovery (local)',
   'Audit',
   'Invite administration',
+  'Organizations',
 ] as const;
 
 export function categoryOf(v: VerbDef): string {
@@ -48,6 +49,7 @@ export function categoryOf(v: VerbDef): string {
   if (id === 'verbs') return 'Capability discovery (local)';
   if (id.startsWith('audit:')) return 'Audit';
   if (id.startsWith('invite:')) return 'Invite administration';
+  if (id.startsWith('org:')) return 'Organizations';
   return 'Other';
 }
 
