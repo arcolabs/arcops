@@ -199,7 +199,7 @@ export const VERBS: VerbDef[] = [
       'with 409. --name is an optional display label; when omitted it defaults to the domain, ' +
       'so `arcops site create acme.com` works as a one-arg command. This is step 1 of the ' +
       'product value path ("connect your first site"). The success output includes the ' +
-      'site\'s tracking embed tag (`embedSnippet` in JSON, an `embed:` line in text; KEH-201) - ' +
+      'site\'s tracking embed tag (`embed_snippet` in JSON, an `embed:` line in text; KEH-201) - ' +
       'paste it into the site\'s <head> to start first-party collection. Note: this only ' +
       'creates the site row; wiring a data source (Stripe key / GSC) is a separate step.',
     scope: 'write',

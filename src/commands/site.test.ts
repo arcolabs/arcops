@@ -318,7 +318,27 @@ describe('site move handler (KEH-188)', () => {
   });
 });
 
-const CREATED_SITE = { id: 9, domain: 'acme.com', name: 'Acme', org_id: 'org-1', created_at: '2026-07-20T00:00:00Z' };
+// The server's POST /api/sites returns the raw Drizzle sites row - camelCase
+// keys plus null secret ciphertext columns (KEH-202). The CLI re-projects this
+// to the snake_case shape shared with site ls/show before printing.
+const CREATED_SITE_ROW = {
+  id: 9,
+  userId: 42,
+  orgId: 'org-1',
+  domain: 'acme.com',
+  name: 'Acme',
+  createdAt: '2026-07-20T00:00:00Z',
+  stripeSecretKey: null,
+  stripeWebhookSecret: null,
+  archivedAt: null,
+};
+const CREATED_SITE_JSON = {
+  id: 9,
+  domain: 'acme.com',
+  name: 'Acme',
+  org_id: 'org-1',
+  created_at: '2026-07-20T00:00:00Z',
+};
 
 describe('site create handler (KEH-191)', () => {
   test('--output json: POSTs { domain, name } to /api/sites, pure site object on stdout', async () => {
@@ -328,7 +348,7 @@ describe('site create handler (KEH-191)', () => {
       async (req, url) => {
         if (req.method === 'POST' && url.pathname === '/api/sites') {
           posts.push({ body: await req.json() });
-          return json({ site: CREATED_SITE }, 201);
+          return json({ site: CREATED_SITE_ROW }, 201);
         }
         return undefined;
       },
@@ -339,11 +359,13 @@ describe('site create handler (KEH-191)', () => {
         { HOME: home },
       );
       expect(code, `stderr: ${stderr}`).toBe(0);
-      // Pure data on stdout: the created site object, unwrapped, no success tick -
-      // plus the site's tracking embed tag (KEH-201), derived from the --api base.
+      // Pure data on stdout: the created site re-projected to snake_case (the
+      // shape shared with site ls/show - KEH-202), unwrapped, no success tick -
+      // plus the site's tracking embed tag (KEH-201), derived from the --api
+      // base. The raw row's camelCase/ciphertext columns must not leak through.
       expect(JSON.parse(stdout)).toEqual({
-        ...CREATED_SITE,
-        embedSnippet: `<script src="${base}/t.js" data-site="9" defer></script>`,
+        ...CREATED_SITE_JSON,
+        embed_snippet: `<script src="${base}/t.js" data-site="9" defer></script>`,
       });
       expect(stderr).toBe('');
       expect(posts).toHaveLength(1);
@@ -357,7 +379,7 @@ describe('site create handler (KEH-191)', () => {
     const home = mkdtempSync(resolve(tmpdir(), 'arcops-create-text-'));
     const { base, stop } = await mockServer([
       (req, url) => {
-        if (req.method === 'POST' && url.pathname === '/api/sites') return json({ site: CREATED_SITE }, 201);
+        if (req.method === 'POST' && url.pathname === '/api/sites') return json({ site: CREATED_SITE_ROW }, 201);
         return undefined;
       },
     ]);
@@ -381,7 +403,7 @@ describe('site create handler (KEH-191)', () => {
       async (req, url) => {
         if (req.method === 'POST' && url.pathname === '/api/sites') {
           posts.push({ body: await req.json() });
-          return json({ site: { ...CREATED_SITE, name: 'acme.com' } }, 201);
+          return json({ site: { ...CREATED_SITE_ROW, name: 'acme.com' } }, 201);
         }
         return undefined;
       },
@@ -491,6 +513,134 @@ describe('site show handler (KEH-201)', () => {
       expect(code, `stderr: ${stderr}`).toBe(0);
       expect(stdout).toContain('acme.com');
       expect(stderr).toContain(`embed: <script src="${base}/t.js" data-site="42" defer></script>`);
+    } finally {
+      await stop();
+    }
+  });
+});
+
+// ── site ls handler: JSON casing (KEH-202 Gate remediation) ──────────
+// The ls JSON path passes the server's enriched snake_case projection through
+// untouched; pin that contract directly (the Gate FAIL noted ls had no
+// behavioral coverage, so the cross-verb casing contract was only pinned for
+// create/show).
+const LS_SITE_ROW = {
+  id: 9,
+  name: 'Acme',
+  domain: 'acme.com',
+  created_by: 42,
+  created_at: '2026-07-20T00:00:00Z',
+  archived_at: null,
+  has_allowlist: false,
+  has_stripe: false,
+  has_gsc: false,
+  visitors_7d: 0,
+};
+
+describe('site ls handler (KEH-202)', () => {
+  test('--output json: snake_case rows on stdout, pass-through unrenamed', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-ls-'));
+    const { base, stop } = await mockServer([
+      (req, url) => {
+        if (req.method === 'GET' && url.pathname === '/api/sites') {
+          return json({ sites: [LS_SITE_ROW], totals: {} });
+        }
+        return undefined;
+      },
+    ]);
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['site', 'ls', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      expect(code, `stderr: ${stderr}`).toBe(0);
+      const rows = JSON.parse(stdout);
+      expect(rows).toEqual([LS_SITE_ROW]);
+      expect(rows[0].created_at).toBe('2026-07-20T00:00:00Z');
+      expect(rows[0]).not.toHaveProperty('createdAt');
+    } finally {
+      await stop();
+    }
+  });
+});
+
+// ── Cross-verb casing contract (KEH-202 Gate remediation) ────────────
+// One entity, three verbs, one casing: create re-projects the server's raw
+// camelCase Drizzle row, ls passes the enriched projection through, show
+// passes presentSite through - all three must surface the same snake_case
+// field names so a single jq path addresses the same field across verbs.
+const SNAKE_CASE_KEY = /^[a-z][a-z0-9_]*$/;
+
+function crossVerbMockRoutes() {
+  return [
+    async (req: Request, url: URL) => {
+      if (req.method === 'POST' && url.pathname === '/api/sites') {
+        return json({ site: CREATED_SITE_ROW }, 201);
+      }
+      if (req.method === 'GET' && url.pathname === '/api/sites') {
+        // ls list doubles as show's id/domain resolution source.
+        return json({ sites: [LS_SITE_ROW], totals: {} });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/sites/9') {
+        return json({
+          site: {
+            id: 9,
+            name: 'Acme',
+            domain: 'acme.com',
+            org_id: 'org-1',
+            created_at: '2026-07-20T00:00:00Z',
+            archived_at: null,
+          },
+        });
+      }
+      return undefined;
+    },
+  ];
+}
+
+describe('site verbs share one JSON casing (KEH-202)', () => {
+  test('create/show/ls --output json: same entity, same snake_case fields', async () => {
+    const home = mkdtempSync(resolve(tmpdir(), 'arcops-casing-'));
+    const { base, stop } = await mockServer(crossVerbMockRoutes());
+    try {
+      const create = await runCli(
+        ['site', 'create', 'acme.com', '--name', 'Acme', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      const show = await runCli(
+        ['site', 'show', 'acme.com', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      const ls = await runCli(
+        ['site', 'ls', '--output', 'json', '--api', base, '--token', 'ts_test'],
+        { HOME: home },
+      );
+      for (const [verb, r] of [['create', create], ['show', show], ['ls', ls]] as const) {
+        expect(r.code, `${verb} stderr: ${r.stderr}`).toBe(0);
+      }
+
+      const created = JSON.parse(create.stdout);
+      const shown = JSON.parse(show.stdout);
+      const listed = JSON.parse(ls.stdout)[0];
+
+      // No camelCase key survives on any verb's output.
+      for (const [verb, obj] of [['create', created], ['show', shown], ['ls', listed]] as const) {
+        for (const key of Object.keys(obj)) {
+          expect(SNAKE_CASE_KEY.test(key), `${verb} emitted non-snake_case key "${key}"`).toBe(true);
+        }
+      }
+
+      // One jq path addresses the same field on all three verbs.
+      for (const obj of [created, shown, listed]) {
+        expect(obj.created_at).toBe('2026-07-20T00:00:00Z');
+        expect(obj.id).toBe(9);
+        expect(obj.domain).toBe('acme.com');
+      }
+
+      // embed_snippet where applicable (create + show), snake_case named.
+      const tag = `<script src="${base}/t.js" data-site="9" defer></script>`;
+      expect(created.embed_snippet).toBe(tag);
+      expect(shown.embed_snippet).toBe(tag);
     } finally {
       await stop();
     }
