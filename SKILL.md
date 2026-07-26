@@ -57,7 +57,7 @@ ARCOPS_API=https://arcops.cc arcops site ls                # per-command overrid
 
 Onboarding is invite-gated and self-service: given a valid invite code you provision your own org and mint your own key over public routes — no admin hand-off, no DB access, no server-side scripts. The CLI is the read/send surface; account/org/key creation happens against the Arcops server auth API (`https://arcops.cc`). Five steps, invite code in hand:
 
-1. **Get an invite code.** An org admin issues one with `arcops invite create --org-name "<Your Org>"` (needs a `write`-scope key with invite-admin rights; see [Invite administration](#invite-administration)). `--org-name` provisions a **new org on redeem** and makes the redeemer its owner — required for cold start. The plaintext code is shown once. (A code minted without `--org-name` only creates a user, no org — you would have nothing to see.)
+1. **Get an invite code.** An existing Arcops invite admin issues one with `arcops invite create --org-name "<Your Org>"` — you cannot mint your own: the invite-admin routes refuse org-scoped BA api-keys (`403 invite_admin_required`); minting is restricted to invite-admin humans (in the CLI: their legacy `ts_` token; see [Invite administration](#invite-administration)). `--org-name` provisions a **new org on redeem** and makes the redeemer its owner — required for cold start. The plaintext code is shown once. (A code minted without `--org-name` only creates a user, no org — you would have nothing to see.)
 
 2. **Sign up with the code** — creates your account **and** your org, and returns a Better Auth session. No CLI verb for signup yet; use the auth API directly (or the browser signup page at `https://arcops.cc/login?invite=<code>`):
    ```bash
@@ -105,7 +105,7 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
    ```
    `--name` is optional (defaults to the domain); pass it for a friendlier display label. The snippet's `data-site` is the numeric site id; the collector script reads it and POSTs pageviews to `/api/collect`.
 
-`<site>` may be the exact domain, a numeric site id, or a unique substring; the CLI resolves it and errors on ambiguity.
+`<site>` may be the exact domain or a numeric site id; the CLI resolves it against your org's site list and exits non-zero (naming the available domains) when nothing matches.
 
 > Legacy `ts_…` tokens minted server-side are still accepted via dual-read but are no longer issued; the invite flow above is the supported path for new orgs.
 
