@@ -251,7 +251,7 @@ describe('org ls handler (KEH-198)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('org_admin_required');
-      expect(String(env.error.message)).toContain('403');
+      expect(env.error.status).toBe(403);
     } finally {
       await stop();
     }
@@ -378,7 +378,7 @@ describe('org create handler (KEH-198)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('org_already_exists');
-      expect(String(env.error.message)).toContain('409');
+      expect(env.error.status).toBe(409);
     } finally {
       await stop();
     }
@@ -406,7 +406,7 @@ describe('org create handler (KEH-198)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('org_admin_required');
-      expect(String(env.error.message)).toContain('403');
+      expect(env.error.status).toBe(403);
     } finally {
       await stop();
     }

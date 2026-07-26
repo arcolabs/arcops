@@ -311,7 +311,8 @@ describe('site move handler (KEH-188)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('move_requires_human_admin');
-      expect(String(env.error.message)).toContain('403');
+      expect(env.error.status).toBe(403);
+      expect(String(env.error.message)).not.toContain('403');
     } finally {
       await stop();
     }
@@ -463,7 +464,7 @@ describe('site create handler (KEH-191)', () => {
       expect(code).toBe(1);
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
-      expect(String(env.error.message)).toContain('409');
+      expect(env.error.status).toBe(409);
     } finally {
       await stop();
     }

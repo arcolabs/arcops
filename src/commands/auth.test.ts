@@ -76,8 +76,10 @@ describe('auth error envelope (contract item 2)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('unauthorized');
-      expect(typeof env.error.message).toBe('string');
-      expect(env.error.message).toContain('401');
+      expect(env.error.status).toBe(401);
+      // KEH-177: message is the server's human-readable text only - no
+      // 'HTTP 401:' / '<code>:' re-prefixing (status/code have own fields).
+      expect(env.error.message).toBe('Invalid API key');
     } finally {
       await stop();
     }
@@ -95,13 +97,14 @@ describe('auth error envelope (contract item 2)', () => {
       expect(stdout).toBe('');
       const env = JSON.parse(stderr);
       expect(env.error.code).toBe('unauthorized');
-      expect(env.error.message).toContain('401');
+      expect(env.error.status).toBe(401);
+      expect(env.error.message).toBe('Invalid API key');
     } finally {
       await stop();
     }
   });
 
-  test('auth login --output text: 401 -> human ✖ line (text mode unchanged)', async () => {
+  test('auth login --output text: 401 -> human ✖ line', async () => {
     const home = mkdtempSync(resolve(tmpdir(), 'arcops-auth-'));
     const { base, stop } = await mockServer([unauthorized]);
     try {
@@ -111,7 +114,7 @@ describe('auth error envelope (contract item 2)', () => {
       );
       expect(code).toBe(1);
       expect(stderr.startsWith('✖ ')).toBe(true);
-      expect(stderr).toContain('401');
+      expect(stderr).toContain('Invalid API key');
       // Must NOT be JSON in text mode.
       expect(() => JSON.parse(stderr)).toThrow();
     } finally {

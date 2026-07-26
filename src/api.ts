@@ -117,11 +117,15 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
   const ctype = res.headers.get('content-type') ?? '';
 
   if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`;
+    // One fact per field (KEH-177): the human-readable message carries only
+    // the readable cause. The HTTP status already lives on ApiError.status,
+    // the server code on ApiError.code, and the request-id is folded into
+    // detail below — the message must not re-prefix any of them.
+    let errMsg = `Request failed with status ${res.status}.`;
     let body: unknown;
-    let detail = '';
     let code: string | undefined;
     let detailObj: unknown;
+    const reqId = res.headers.get('x-request-id') ?? res.headers.get('cf-ray');
     if (ctype.includes('application/json') && text) {
       try {
         body = JSON.parse(text);
@@ -129,40 +133,43 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
         if (j.error && typeof j.error === 'object' && typeof (j.error as { code?: unknown }).code === 'string') {
           // Structured error contract from the server (S1 / KEH-88):
           //   { error: { code, message, detail? } }
-          // Preserve code + detail verbatim for agent consumption, and build a
-          // human-readable message that folds in the most actionable
-          // diagnostic so a TTY user sees the real cause inline. e.g.:
-          //   HTTP 502: cf_send_failed: Cloudflare rejected the outbound email. (upstream: email.sending.error.email.invalid)
+          // Preserve code + detail verbatim for agent consumption; the
+          // message is the server's human-readable text, folded with the
+          // most actionable upstream diagnostic when present. e.g.:
+          //   Cloudflare rejected the outbound email. (upstream: email.sending.error.email.invalid)
           const ee = j.error as { code: string; message?: string; detail?: Record<string, unknown> };
           code = ee.code;
           detailObj = ee.detail;
-          const parts: string[] = [ee.code];
-          if (ee.message) parts.push(ee.message);
-          detail = parts.join(': ');
+          errMsg = ee.message || ee.code;
           if (ee.detail) {
             const upstream = ee.detail.upstream;
             const raw = ee.detail.error;
-            if (typeof upstream === 'string') detail += ` (upstream: ${upstream})`;
-            else if (typeof raw === 'string') detail += ` (${raw.slice(0, 160)})`;
+            if (typeof upstream === 'string') errMsg += ` (upstream: ${upstream})`;
+            else if (typeof raw === 'string') errMsg += ` (${raw.slice(0, 160)})`;
           }
         } else if (typeof j.error === 'string') {
-          detail = j.error;
+          errMsg = j.error;
         } else if (typeof j.message === 'string') {
-          detail = j.message;
+          errMsg = j.message;
         } else {
-          detail = text.slice(0, 200);
+          errMsg = text.slice(0, 200);
         }
       } catch {
-        detail = text.slice(0, 200);
+        errMsg = text.slice(0, 200);
       }
     } else if (text) {
       // Non-JSON error body (often a Next.js HTML 500 page or a CF intercept).
       // Strip tags/whitespace so the snippet is readable.
-      detail = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+      errMsg = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
     }
-    if (detail) errMsg += `: ${detail}`;
-    const reqId = res.headers.get('x-request-id') ?? res.headers.get('cf-ray');
-    if (reqId) errMsg += ` (request-id: ${reqId})`;
+    if (reqId) {
+      // Request-id belongs to detail, not the message, so the JSON envelope
+      // keeps one fact per field. TTY rendering re-appends it (emitError).
+      detailObj = {
+        ...(typeof detailObj === 'object' && detailObj !== null ? detailObj as Record<string, unknown> : {}),
+        request_id: reqId,
+      };
+    }
     throw new ApiError(res.status, errMsg, { kind: 'api', code, detail: detailObj, body });
   }
 

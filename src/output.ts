@@ -40,7 +40,13 @@ export function emitError(e: unknown, outputFlag?: string): void {
     process.stderr.write(JSON.stringify({ error: err }) + '\n');
     return;
   }
-  error((e as Error)?.message ?? String(e));
+  // Text mode: re-append the request-id (kept in detail since KEH-177) so a
+  // human still sees the support-correlation id inline.
+  const reqId = e instanceof ApiError && e.detail && typeof e.detail === 'object'
+    ? (e.detail as Record<string, unknown>).request_id
+    : undefined;
+  const msg = (e as Error)?.message ?? String(e);
+  error(typeof reqId === 'string' ? `${msg} (request-id: ${reqId})` : msg);
 }
 
 // stdout = data only.
