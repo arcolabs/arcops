@@ -15,6 +15,7 @@ import { confirmByTyping } from '../lib/confirm';
 import { renderTemplate, readTemplate } from '../lib/templates';
 import { parseSnoozeUntil } from '../lib/snooze-parse';
 import { deriveDraftSendKey, deriveReplyKey, deriveSendKey } from '../lib/idempotency-key';
+import { hasMarkdown, renderMarkdownEmail } from '../lib/markdown-email';
 import { splitList } from '../dispatch';
 import { readFileSync, statSync } from 'node:fs';
 import { basename, extname } from 'node:path';
@@ -336,6 +337,16 @@ async function buildQuotedReply(
   return `${body}\n\nOn ${date}, ${lastInbound.from_email} wrote:\n${quoted}\n`;
 }
 
+// KEH-274: render the body to email-safe HTML so recipients see formatted
+// markdown (tables / headings / bold / code) instead of bare `##` and
+// `|---|`. The server ships bodyHtml as the text/html part of a
+// multipart/alternative email alongside the required plain-text body. A body
+// with no markdown constructs returns undefined -> no bodyHtml is sent and the
+// email goes out text-only, byte-identical to pre-KEH-274 (acceptance #5).
+function renderBodyHtml(body: string): string | undefined {
+  return hasMarkdown(body) ? renderMarkdownEmail(body) : undefined;
+}
+
 // ─── Listing + reading ────────────────────────────────────────────────
 
 export async function ls(args: {
@@ -529,6 +540,9 @@ export async function reply(args: {
     body = await buildQuotedReply(body, auth, site.id, threadId, data);
   }
 
+  // KEH-274: HTML part rendered from the final (post-quote) markdown body.
+  const bodyHtml = renderBodyHtml(body);
+
   const attachPaths = parseAttachPaths(args.attach);
   const recipients = data.thread.participant_emails.join(', ');
   const subject = data.thread.subject || 'Re: (no subject)';
@@ -571,11 +585,12 @@ export async function reply(args: {
       if (attachPaths.length === 0) {
         return apiPost<{ messageId: number }>(
           `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-          { api: auth.api, token: auth.token, idempotencyKey, body: { body } },
+          { api: auth.api, token: auth.token, idempotencyKey, body: { body, ...(bodyHtml ? { bodyHtml } : {}) } },
         );
       }
       const fd = new FormData();
       fd.append('body', body);
+      if (bodyHtml) fd.append('bodyHtml', bodyHtml);
       for (const p of attachPaths) {
         const buf = readFileSync(p);
         fd.append(
@@ -663,6 +678,9 @@ export async function send(args: {
   });
   if (!body || !body.trim()) { error('Body is empty.'); process.exit(2); }
 
+  // KEH-274: HTML part rendered from the markdown body.
+  const bodyHtml = renderBodyHtml(body);
+
   const attachPaths = parseAttachPaths(args.attach);
 
   process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
@@ -703,6 +721,7 @@ export async function send(args: {
             ...(ccList.length > 0 ? { cc: ccList } : {}),
             subject,
             body,
+            ...(bodyHtml ? { bodyHtml } : {}),
             from: fromLocal,
           },
         },
@@ -714,6 +733,7 @@ export async function send(args: {
     if (ccList.length > 0) fd.append('cc', ccList.join(','));
     fd.append('subject', subject);
     fd.append('body', body);
+    if (bodyHtml) fd.append('bodyHtml', bodyHtml);
     fd.append('from', fromLocal);
     for (const p of attachPaths) {
       fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
