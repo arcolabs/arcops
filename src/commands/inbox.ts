@@ -425,6 +425,9 @@ export async function read(args: {
   const threadId = requireThreadId(args);
   await apiPost(`/api/sites/${site.id}/inbox/threads/${threadId}/mark-read`, {
     api: auth.api, token: auth.token,
+    // KEH-270: mark-read is idempotent (re-marking a read thread is a no-op),
+    // so it joins the transient-network retry whitelist explicitly.
+    retryable: true,
   });
   success(`Thread ${threadId} marked read.`);
 }

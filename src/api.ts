@@ -41,7 +41,47 @@ type Opts = {
   // can dedupe retries of the same logical write (email send/reply/draft send)
   // instead of dispatching a second side effect. Read verbs ignore this.
   idempotencyKey?: string;
+  // KEH-270: explicit opt-in to transient-network retry for a NON-GET request.
+  // Only set this when repeating the request is provably side-effect-safe
+  // (e.g. mark-read: marking an already-read thread read again is a no-op).
+  // Send-class writes (reply / send / draft send) must NOT set this - their
+  // KEH-164 recovery owns retry semantics via Idempotency-Key.
+  retryable?: boolean;
 };
+
+// KEH-270: transient network failures (socket reset, DNS blip, TLS reset)
+// must not masquerade as service failures. Bounded retry: at most 3 attempts,
+// exponential backoff 250ms -> 500ms (jittered), so a success on the last
+// attempt adds <=750ms of latency. Retry whitelist is GET-only by default;
+// non-GET requires the explicit `retryable` opt-in above.
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_BASE_MS = 250;
+
+function isRetryableFetchThrow(err: Error): boolean {
+  // TimeoutError = our own AbortSignal budget burned (default 30s) - retrying
+  // would multiply the caller's wait, and a server that slow is not a "blip".
+  // AbortError = deliberately cancelled. Everything else fetch throws is a
+  // socket-level failure (undici surfaces it as TypeError 'fetch failed' with
+  // the OS code on err.cause - ECONNRESET / ETIMEDOUT / EAI_AGAIN / ...).
+  return err.name !== 'TimeoutError' && err.name !== 'AbortError';
+}
+
+function causeCode(err: unknown): string | undefined {
+  // undici: single-address failures put the OS code on cause.code; connect
+  // failures across multiple addresses use an AggregateError without .code.
+  const c = (err as { cause?: unknown }).cause;
+  if (!c || typeof c !== 'object') return undefined;
+  const code = (c as { code?: unknown }).code;
+  if (typeof code === 'string') return code;
+  const errs = (c as { errors?: unknown }).errors;
+  if (Array.isArray(errs)) {
+    const first = errs.find((e) => e && typeof (e as { code?: unknown }).code === 'string');
+    if (first) return (first as { code: string }).code;
+  }
+  return undefined;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T> {
   const url = new URL(path, opts.api);
@@ -77,20 +117,37 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
   }
 
   let res: Response;
-  try {
-    res = await fetch(url, {
-      method: opts.method ?? 'GET',
-      headers,
-      body,
-      signal: AbortSignal.timeout(timeoutMs),
-      redirect: 'manual',
-    });
-  } catch (e) {
-    const err = e as Error;
-    if (err.name === 'TimeoutError') {
-      throw new ApiError(0, `Request to ${url.host} timed out after ${timeoutMs}ms (override with ARCOPS_TIMEOUT_MS).`, { kind: 'timeout' });
+  const method = opts.method ?? 'GET';
+  const mayRetry = method === 'GET' || opts.retryable === true;
+  let attempt = 0;
+  for (;;) {
+    attempt++;
+    try {
+      res = await fetch(url, {
+        method,
+        headers,
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+        redirect: 'manual',
+      });
+      break;
+    } catch (e) {
+      const err = e as Error;
+      if (err.name === 'TimeoutError') {
+        throw new ApiError(0, `Request to ${url.host} timed out after ${timeoutMs}ms (override with ARCOPS_TIMEOUT_MS).`, { kind: 'timeout' });
+      }
+      const code = causeCode(err);
+      const suffix = code ? ` (${code})` : '';
+      if (!mayRetry || !isRetryableFetchThrow(err) || attempt >= RETRY_MAX_ATTEMPTS) {
+        // Retries exhausted (or not allowed): name the attempt count and the
+        // last underlying error so a network blip is distinguishable from a
+        // service failure. Single-attempt non-retryable failures keep the
+        // historical message shape (no "after 1 attempt" noise).
+        const attemptsNote = attempt > 1 ? ` after ${attempt} attempts` : '';
+        throw new ApiError(0, `Request to ${url.host} failed${attemptsNote}: ${err.message}${suffix}`, { kind: 'network' });
+      }
+      await sleep(RETRY_BASE_MS * 2 ** (attempt - 1) * (0.5 + Math.random() * 0.5));
     }
-    throw new ApiError(0, `Request to ${url.host} failed: ${err.message}`, { kind: 'network' });
   }
 
   // Detect Cloudflare Access intercept (3xx redirect to *.cloudflareaccess.com).
