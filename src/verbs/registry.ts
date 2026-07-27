@@ -502,9 +502,10 @@ export const VERBS: VerbDef[] = [
     args: [
       { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain.' },
       { name: 'thread_id', cliName: 'thread-id', type: 'number', required: true, positional: true, description: 'Thread id.' },
+      { name: 'full', type: 'boolean', cliOnly: true, description: 'Fetch the full body (body_text/body_html) of every message via the message body endpoint; default output keeps the 500-char snippet. Messages whose body was never backfilled carry body_truncated=true - never silently shortened.' },
       { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
     ],
-    examples: ['inbox show acme.com 123'],
+    examples: ['inbox show acme.com 123', 'inbox show acme.com 123 --full --output json'],
     http: { method: 'GET', path: '/api/sites/:siteId/inbox/threads/:threadId' },
     outputShape: 'unknown',
   },

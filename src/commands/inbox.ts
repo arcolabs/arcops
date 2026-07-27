@@ -58,6 +58,17 @@ function requireThreadId(args: { 'thread-id'?: string }): number {
   return id;
 }
 
+// GET /api/sites/:id/inbox/messages/:messageId/body (KEH-277).
+// text_source/truncated arrived with KEH-277 - pre-upgrade servers omit
+// them, so both are optional here and surface as null, never guessed.
+type InboxMessageBody = {
+  text: string | null;
+  html: string | null;
+  attachments?: Record<string, unknown>[];
+  text_source?: 'body' | 'snippet_fallback';
+  truncated?: boolean;
+};
+
 function requireDraftId(args: { 'draft-id'?: string }): number {
   const id = Number(args['draft-id']);
   if (!Number.isFinite(id)) { error('draft-id required'); process.exit(2); }
@@ -393,7 +404,7 @@ export async function ls(args: {
 }
 
 export async function show(args: {
-  site?: string; 'thread-id'?: string;
+  site?: string; 'thread-id'?: string; full?: string;
   token?: string; api?: string; output?: string;
 }) {
   const auth = resolveAuth(args);
@@ -405,13 +416,56 @@ export async function show(args: {
     messages: Record<string, unknown>[];
   }>(`/api/sites/${site.id}/inbox/threads/${threadId}`, { api: auth.api, token: auth.token });
 
+  // --full (KEH-277): fan out to the message body endpoint and merge the
+  // complete body into each message. Default stays snippet-only so
+  // list-style usage doesn't pay for full bodies. Any body-fetch failure
+  // aborts the command non-zero (via apiGet throwing) - a partial thread
+  // presented as complete would be the silent-truncation bug this flag
+  // exists to kill.
+  if (args.full === 'true') {
+    for (const m of data.messages) {
+      const body = await apiGet<InboxMessageBody>(
+        `/api/sites/${site.id}/inbox/messages/${m.id}/body`,
+        { api: auth.api, token: auth.token },
+      );
+      m.body_text = body.text;
+      m.body_html = body.html;
+      m.attachments = body.attachments ?? [];
+      // text_source/truncated were added to the endpoint with KEH-277; an
+      // older server omits them. null = "unknown" - never guessed.
+      m.body_text_source = body.text_source ?? null;
+      m.body_truncated = body.truncated ?? null;
+    }
+  }
+
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(data);
   process.stderr.write(`Thread: ${data.thread.subject}\n`);
   process.stderr.write(
     `Status: ${data.thread.status}  Unread: ${data.thread.unread_for_ops}  Assignee: ${data.thread.assignee_email ?? '—'}\n`,
   );
-  printTable(data.messages, ['id', 'from_email', 'subject', 'direction', 'received_at']);
+  if (args.full !== 'true') {
+    printTable(data.messages, ['id', 'from_email', 'subject', 'direction', 'received_at']);
+    return;
+  }
+  // --full text mode: the bodies ARE the data -> stdout. Truncation and
+  // html-only cases render as explicit bracketed markers, never as silence.
+  for (const m of data.messages) {
+    info(`── message #${m.id} · ${m.direction} · from ${m.from_email} · ${m.received_at}`);
+    const text = m.body_text as string | null;
+    if (m.body_truncated === true) {
+      process.stdout.write(`${text ?? ''}\n[TRUNCATED: server holds only the ≤500-char snippet for this message (legacy row, body never backfilled)]\n\n`);
+    } else if (text != null) {
+      process.stdout.write(`${text}\n\n`);
+    } else if (typeof m.body_html === 'string') {
+      process.stdout.write(`[HTML-only body — ${m.body_html.length} bytes — re-run with --output json to read body_html]\n\n`);
+    } else {
+      process.stdout.write('[no body stored for this message]\n\n');
+    }
+    for (const a of (m.attachments ?? []) as Record<string, unknown>[]) {
+      process.stdout.write(`[attachment: ${a.filename ?? '(unnamed)'} (${a.content_type ?? 'unknown type'}${typeof a.size === 'number' ? `, ${a.size} bytes` : ''})]\n`);
+    }
+  }
 }
 
 // ─── State mutations ──────────────────────────────────────────────────

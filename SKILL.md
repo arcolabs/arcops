@@ -184,6 +184,7 @@ arcops attribution diag <site> --output json          # attribution coverage hea
 ```bash
 arcops inbox ls <site> --status open --unread --output json
 arcops inbox show <site> <thread-id> --output json
+arcops inbox show <site> <thread-id> --full --output json   # full bodies (body_text/body_html); truncated messages carry body_truncated=true
 arcops inbox draft create <site> <thread-id> --body "Thanks - looking into this."
 arcops inbox draft send <site> <thread-id> <draft-id> --yes   # send scope; verify-after-send
 ```
