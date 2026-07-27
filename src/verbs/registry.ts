@@ -65,7 +65,7 @@ export type VerbDef = {
 // --api / --output), gate interactive confirms (--yes), override the derived
 // idempotency key (--idempotency-key), or select verbs-output (--json). They
 // never become API body/query params and never appear in the MCP input schema.
-const CLI_ONLY_ARGS = new Set(['token', 'api', 'output', 'yes', 'idempotency_key', 'json']);
+const CLI_ONLY_ARGS = new Set(['token', 'api', 'output', 'yes', 'idempotency_key', 'json', 'dry_run']);
 export function isCliOnlyArg(name: string): boolean {
   return CLI_ONLY_ARGS.has(name);
 }
@@ -611,6 +611,7 @@ export const VERBS: VerbDef[] = [
       { name: 'attach', type: 'string[]', repeatable: true, description: 'Attachment path; repeat for multiple files.' },
       { name: 'quote', type: 'boolean', description: 'Quote the most recent inbound message inline.' },
       { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip interactive confirmation.' },
+      { name: 'dry_run', cliName: 'dry-run', type: 'boolean', cliOnly: true, description: 'Render and print the would-be-delivered email (HTML + plain text) without sending, consuming no idempotency key or draft.' },
       { name: 'idempotency_key', cliName: 'idempotency-key', type: 'string', cliOnly: true, description: 'Override the derived Idempotency-Key.' },
     ],
     examples: ['inbox reply acme.com 123 --body "Thanks for reaching out." --yes'],
@@ -635,6 +636,7 @@ export const VERBS: VerbDef[] = [
       { name: 'template', type: 'string', description: 'Name of a local template.' },
       { name: 'attach', type: 'string[]', repeatable: true, description: 'Attachment path; repeat for multiple files.' },
       { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip interactive confirmation.' },
+      { name: 'dry_run', cliName: 'dry-run', type: 'boolean', cliOnly: true, description: 'Render and print the would-be-delivered email (HTML + plain text) without sending, consuming no idempotency key or draft.' },
       { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
       { name: 'idempotency_key', cliName: 'idempotency-key', type: 'string', cliOnly: true, description: 'Override the derived Idempotency-Key.' },
     ],

@@ -358,6 +358,62 @@ function renderBodyHtml(body: string): string | undefined {
   return hasMarkdown(body) ? renderMarkdownEmail(body) : undefined;
 }
 
+// KEH-278 C: dry-run preview. Prints the would-be-delivered email - rendered
+// HTML plus the plain-text body - WITHOUT sending, consuming an idempotency
+// key, creating a draft, or prompting. `bodyHtml` is produced by the exact
+// same `renderBodyHtml` call the real send uses, on the same final (post-quote
+// for reply) body, so what you see here is byte-for-byte what the recipient
+// would get (C2: one render path - never a second one that can drift). The
+// branch returns before any write/idempotency/confirm code, so C3 (no writes,
+// no key, no draft) holds by construction. `--output json` yields a parseable
+// object on stdout (C4); text mode prints a human-readable block on stdout
+// (the rendered content is the data the caller asked for, not noise).
+function printDryRun(opts: {
+  action: 'send' | 'reply';
+  output?: string;
+  from: string;
+  to: string[];
+  cc?: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | undefined;
+  attachPaths: string[];
+}): void {
+  info('Dry run: nothing sent, no idempotency key consumed, no draft created.');
+  const fmt = detectOutputFormat(opts.output);
+  if (fmt === 'json') {
+    printJson({
+      action: opts.action,
+      dryRun: true,
+      from: opts.from,
+      to: opts.to,
+      ...(opts.cc && opts.cc.length > 0 ? { cc: opts.cc } : {}),
+      subject: opts.subject,
+      bodyText: opts.bodyText,
+      ...(opts.bodyHtml ? { bodyHtml: opts.bodyHtml } : {}),
+      attach: opts.attachPaths.map((p) => basename(p)),
+    });
+    return;
+  }
+  process.stdout.write(`\n─ Dry run (${opts.action}) - nothing will be sent ──────\n`);
+  process.stdout.write(`From:     ${opts.from}\n`);
+  process.stdout.write(`To:       ${opts.to.join(', ')}\n`);
+  if (opts.cc && opts.cc.length > 0) process.stdout.write(`Cc:       ${opts.cc.join(', ')}\n`);
+  process.stdout.write(`Subject:  ${opts.subject}\n`);
+  if (opts.attachPaths.length > 0) {
+    process.stdout.write(`Attach:   ${opts.attachPaths.map((p) => `${basename(p)} (${statSync(p).size}B)`).join(', ')}\n`);
+  }
+  process.stdout.write(`\n─ Plain-text body (${opts.bodyText.length} chars) ──\n`);
+  process.stdout.write(opts.bodyText + (opts.bodyText.endsWith('\n') ? '' : '\n'));
+  if (opts.bodyHtml) {
+    process.stdout.write(`\n─ Rendered HTML (text/html part) ────────────────────\n`);
+    process.stdout.write(opts.bodyHtml + '\n');
+  } else {
+    process.stdout.write(`\nRendered HTML: none (body has no Markdown constructs; email sends text-only, byte-identical to a plain send).\n`);
+  }
+  process.stdout.write(`──────────────────────────────────────────────────────\n`);
+}
+
 // ─── Listing + reading ────────────────────────────────────────────────
 
 export async function ls(args: {
@@ -573,6 +629,7 @@ export async function reply(args: {
   site?: string; 'thread-id'?: string;
   body?: string; 'body-file'?: string; template?: string;
   attach?: string; quote?: string; yes?: string;
+  'dry-run'?: string;
   'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
 }) {
@@ -603,6 +660,23 @@ export async function reply(args: {
   const attachPaths = parseAttachPaths(args.attach);
   const recipients = data.thread.participant_emails.join(', ');
   const subject = data.thread.subject || 'Re: (no subject)';
+
+  // KEH-278 C: dry-run renders the would-be reply and stops - no send, no
+  // idempotency key, no draft, no confirm. bodyHtml above is the same render
+  // the real send would ship.
+  if (args['dry-run'] === 'true') {
+    printDryRun({
+      action: 'reply',
+      output: args.output,
+      from: `support@${site.domain}`,
+      to: data.thread.participant_emails,
+      subject,
+      bodyText: body,
+      bodyHtml,
+      attachPaths,
+    });
+    return;
+  }
 
   process.stderr.write(`\n─ Reply preview ─────────────────────────────────────\n`);
   process.stderr.write(`Site:     ${site.domain}\n`);
@@ -708,6 +782,7 @@ export async function send(args: {
   body?: string; 'body-file'?: string; template?: string;
   attach?: string;
   yes?: string;
+  'dry-run'?: string;
   'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
 }) {
@@ -739,6 +814,24 @@ export async function send(args: {
   const bodyHtml = renderBodyHtml(body);
 
   const attachPaths = parseAttachPaths(args.attach);
+
+  // KEH-278 C: dry-run renders the would-be email and stops - no send, no
+  // idempotency key, no draft, no confirm. bodyHtml above is the same render
+  // the real send would ship, so the preview cannot drift from delivery.
+  if (args['dry-run'] === 'true') {
+    printDryRun({
+      action: 'send',
+      output: args.output,
+      from: `${fromLocal}@${site.domain}`,
+      to: toList,
+      cc: ccList,
+      subject,
+      bodyText: body,
+      bodyHtml,
+      attachPaths,
+    });
+    return;
+  }
 
   process.stderr.write(`\n─ Send preview ──────────────────────────────────────\n`);
   process.stderr.write(`Site:     ${site.domain}\n`);
