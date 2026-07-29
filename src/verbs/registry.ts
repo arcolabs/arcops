@@ -655,13 +655,13 @@ export const VERBS: VerbDef[] = [
     args: [
       { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain.' },
       { name: 'thread_id', cliName: 'thread-id', type: 'number', required: true, positional: true, description: 'Thread id.' },
-      { name: 'body', type: 'string', description: 'Plain-text draft body.' },
-      { name: 'body_file', cliName: 'body-file', type: 'string', description: 'Path to a file containing the body (- for stdin).' },
+      { name: 'body', type: 'string', description: 'Draft body (Markdown is rendered to email-safe HTML and stored as the text/html part; sent when the draft is promoted).' },
+      { name: 'body_file', cliName: 'body-file', type: 'string', description: 'Path to a file containing the body (- for stdin); Markdown is rendered to HTML.' },
       { name: 'template', type: 'string', description: 'Name of a local template.' },
       { name: 'quote', type: 'boolean', description: 'Quote the most recent inbound message inline.' },
     ],
     examples: ['inbox draft create acme.com 123 --body "Drafting a reply."'],
-    http: { method: 'POST', path: '/api/sites/:siteId/inbox/threads/:threadId/drafts', body: ['body_text'] },
+    http: { method: 'POST', path: '/api/sites/:siteId/inbox/threads/:threadId/drafts', body: ['body_text', 'bodyHtml'] },
     outputShape: 'unknown',
   },
   {

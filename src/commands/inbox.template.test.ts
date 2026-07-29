@@ -50,6 +50,10 @@ function setupHome(): string {
     resolve(tempHome, '.arcops', 'templates', 'site-domain-send.md'),
     'Hello from {{site_domain}} to {{customer_email}}.',
   );
+  writeFileSync(
+    resolve(tempHome, '.arcops', 'templates', 'draft-markdown.md'),
+    'Hello **{{customer_email}}** about `{{thread_subject}}`.',
+  );
   return tempHome;
 }
 
@@ -134,6 +138,7 @@ describe('inbox template variable rendering', () => {
 
   test('inbox draft create renders {{site_domain}} from thread site', async () => {
     let capturedBodyText: string | undefined;
+    let capturedBodyHtml: string | undefined;
     const { base, stop } = mockServer([
       (req, url) =>
         url.pathname === '/api/sites' && req.method === 'GET'
@@ -150,6 +155,7 @@ describe('inbox template variable rendering', () => {
         if (url.pathname === '/api/sites/8/inbox/threads/22/drafts' && req.method === 'POST') {
           return readJsonBody(req).then((body) => {
             capturedBodyText = (body as { body_text: string }).body_text;
+            capturedBodyHtml = (body as { bodyHtml?: string }).bodyHtml;
             return json({ draft: { id: 5 } });
           }) as unknown as Response;
         }
@@ -160,10 +166,12 @@ describe('inbox template variable rendering', () => {
     try {
       const res = await runCli(tempHome!, [
         '--api', base, 'inbox', 'draft', 'create', 'draft.example.com', '22',
-        '--template', 'site-domain',
+        '--template', 'draft-markdown',
       ]);
       expect(res.code).toBe(0);
-      expect(capturedBodyText).toBe('Hello from draft.example.com to acct@example.com about Invoice.');
+      expect(capturedBodyText).toBe('Hello **acct@example.com** about `Invoice`.');
+      expect(capturedBodyHtml).toContain('<strong>acct@example.com</strong>');
+      expect(capturedBodyHtml).toContain('>Invoice</code>');
     } finally {
       await stop();
     }

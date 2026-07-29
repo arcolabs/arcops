@@ -963,9 +963,15 @@ export const draft = {
       body = await buildQuotedReply(body, auth, site.id, threadId, data);
     }
 
+    // KEH-276: HTML part rendered from the final (post-quote) markdown body,
+    // same as reply/send (KEH-274). The server stores it on the draft and
+    // draft send ships it as the text/html part; no markdown -> undefined ->
+    // text-only draft, byte-identical to pre-KEH-276.
+    const bodyHtml = renderBodyHtml(body);
+
     const result = await apiPost<{ draft: { id: number } }>(
       `/api/sites/${site.id}/inbox/threads/${threadId}/drafts`,
-      { api: auth.api, token: auth.token, body: { body_text: body } },
+      { api: auth.api, token: auth.token, body: { body_text: body, ...(bodyHtml ? { bodyHtml } : {}) } },
     );
     const fmt = detectOutputFormat(args.output);
     if (fmt === 'json') return printJson(result);
