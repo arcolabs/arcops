@@ -63,29 +63,11 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
 
 1. **Get an invite code.** An existing Arcops invite admin issues one with `arcops invite create --org-name "<Your Org>"` — you cannot mint your own: the invite-admin routes refuse org-scoped BA api-keys (`403 invite_admin_required`); minting is restricted to invite-admin humans (in the CLI: their legacy `ts_` token; see [Invite administration](#invite-administration)). `--org-name` provisions a **new org on redeem** and makes the redeemer its owner — required for cold start. The plaintext code is shown once. (A code minted without `--org-name` only creates a user, no org — you would have nothing to see.)
 
-2. **Sign up with the code** — creates your account **and** your org, and returns a Better Auth session. No CLI verb for signup yet; use the auth API directly (or the browser signup page at `https://arcops.cc/login?invite=<code>`):
-   ```bash
-   curl -sS -c cookies.txt https://arcops.cc/api/auth/sign-up/email \
-     -H 'Content-Type: application/json' \
-     -d '{"email":"you@example.com","password":"<password>","name":"You","inviteCode":"<code>"}'
-   ```
-   `200` on success; the session is saved to `cookies.txt` and the invite auto-provisions your org.
+2. **Sign in with the code.** Open `https://arcops.cc/login?invite=<code>` in a browser and continue with an Email OTP or Google. Arcops has no password signup or password login. The invite provisions the new account and organization; returning users can sign in without an invite.
 
-   **Already have an account?** (returning user, fresh terminal, or a re-run — sign-up with an existing email fails with `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL`.) Sign in instead; no invite code needed:
-   ```bash
-   curl -sS -c cookies.txt https://arcops.cc/api/auth/sign-in/email \
-     -H 'Content-Type: application/json' \
-     -d '{"email":"you@example.com","password":"<password>"}'
-   ```
-   `200` returns `{"token": "...", "user": {...}}` and saves the session cookie to `cookies.txt` — continue at step 3. Wrong credentials return `401` (`INVALID_EMAIL_OR_PASSWORD`).
+   Authentication is an intentional human boundary. An agent may open the login page, but it must not ask for, scrape, or persist the one-time email code or Google credentials.
 
-3. **Mint an org-scoped API key** with that session:
-   ```bash
-   curl -sS -b cookies.txt https://arcops.cc/api/auth/api-keys \
-     -H 'Content-Type: application/json' \
-     -d '{"name":"arcops-cli","scope":"write"}'
-   ```
-   `scope` is **required** — one of the three tiers from the table above (`read` / `write` / `send`); omitting it returns `422 {"error":"scope must be read|write|send"}`. Cold start needs `write`: step 5's `site create` is a write verb. `201` returns the key at `apiKey.key`; copy its plaintext value **exactly once** — it is not shown again. Do not assume a prefix (newly issued keys are org-scoped Better Auth keys, not `ts_…`).
+3. **Mint an org-scoped API key.** In Arcops, open **Workspace settings → API keys**, create a key named for the agent or machine, choose a scope, and copy the plaintext value **exactly once**. Cold start needs `write` because step 5 creates a site. Use `send` only when the agent must send customer email. Do not assume a prefix; newly issued keys are Better Auth organization keys, while legacy `ts_…` tokens are accepted only for compatibility.
 
 4. **Install + authenticate (CLI).**
    ```bash
