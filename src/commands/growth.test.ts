@@ -285,4 +285,35 @@ describe('growth command surface', () => {
       await stop();
     }
   });
+
+  test('signal refresh recomputes instead of reusing a durable idempotency key', async () => {
+    const seen: SeenRequest[] = [];
+    const { base, stop } = await mockServer((request) => {
+      seen.push(request);
+      return json({ opened: 0, resolved: 0, signals: [] });
+    });
+    try {
+      const first = await runCli(['growth', 'signal', 'refresh', 'acme.com'], base);
+      const second = await runCli(['growth', 'signal', 'refresh', 'acme.com'], base);
+
+      expect(first.code, first.stderr).toBe(0);
+      expect(second.code, second.stderr).toBe(0);
+      expect(seen).toEqual([
+        {
+          method: 'POST',
+          path: '/api/sites/42/growth/signals/refresh',
+          body: {},
+          idempotencyKey: null,
+        },
+        {
+          method: 'POST',
+          path: '/api/sites/42/growth/signals/refresh',
+          body: {},
+          idempotencyKey: null,
+        },
+      ]);
+    } finally {
+      await stop();
+    }
+  });
 });

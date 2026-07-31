@@ -344,7 +344,6 @@ export const signal = {
     const result = await apiPost<any>(`/api/sites/${site.id}/growth/signals/refresh`, {
       ...auth,
       body: {},
-      idempotencyKey: idempotencyKey(args, site.id, 'signal-refresh', {}),
     });
     if (detectOutputFormat(args.output) === 'json') return printJson(result);
     success(`Refreshed signals: ${result.opened} opened, ${result.resolved} resolved`);
