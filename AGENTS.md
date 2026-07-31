@@ -6,7 +6,7 @@ cross-channel facts, lifecycle semantics, experiment memory, and bounded actions
 across acquisition, activation, revenue, retention, Search Console, Stripe, and
 the customer inbox. Published to npm as `@arcolab/arcops`.
 
-**Naming history**: previously `traffic-source-cli` (binary `ts`, backend `traffic-source/`) -> `quay` (binary `quay`, package `@tritonix/quay`) -> `arcops` (binary `arcops`, package `@arcolab/arcops`). The local checkout dir is still `~/projects/saas/quay-cli/` and the server repo is still `~/projects/saas/quay/` (local paths unchanged; git remotes point at `arcolabs/arcops` and `arcolabs/arcops-server`). Token prefix `ts_` is a server-side contract and stays unchanged. Zeabur project / CF Access app names may still reference old slugs - that's a separate, costly rename and stays deferred.
+**Naming history**: previously `traffic-source-cli` (binary `ts`, backend `traffic-source/`) -> `quay` (binary `quay`, package `@tritonix/quay`) -> `arcops` (binary `arcops`, package `@arcolab/arcops`). The current checkouts are `~/projects/arco/arcops-cli/` and `~/projects/arco/arcops-server/`; git remotes point at `arcolabs/arcops` and `arcolabs/arcops-server`. The `ts_` prefix identifies legacy compatibility tokens only. Zeabur project / CF Access app names may still reference old slugs - that's a separate, costly rename and stays deferred.
 
 Global engineering discipline: `~/.claude/CLAUDE.md`. CLI-specific patterns: `~/.claude/knowledge/frameworks/cli-development.md` (read this before editing - output layering, catalog-as-data, fetch timeouts, lockfile gotchas, ANSI palette discipline).
 
@@ -26,9 +26,9 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 ```
 
 ## Two-repo workflow
-- Server repo: `~/projects/saas/quay/` (Next.js, Zeabur) = `arcolabs/arcops-server`. Endpoints, auth middleware, schema, mint-token script. Production: `https://arcops.cc` (Tencent Tokyo; `tritonix.cn` is a legacy alias until external pointers migrate, `ops.arco.video` was unbound 2026-07-16).
-- CLI repo: this one (`~/projects/saas/quay-cli/`) = `arcolabs/arcops`. Distributed via npm (`@arcolab/arcops`); `bun link` for local dev.
-- Cross-repo work: split commits via `git -C <path>`. Server change must `git push` to trigger Zeabur deploy before the CLI can use it.
+- Server repo: `~/projects/arco/arcops-server/` (TanStack Start, Zeabur) = `arcolabs/arcops-server`. Endpoints, auth middleware, schema, and key verification live there. Production: `https://arcops.cc` (Tencent Tokyo; `tritonix.cn` is a legacy alias until external pointers migrate, `ops.arco.video` was unbound 2026-07-16).
+- CLI repo: this one (`~/projects/arco/arcops-cli/`) = `arcolabs/arcops`. Distributed via npm (`@arcolab/arcops`); `bun link` for local dev.
+- Cross-repo work: split commits via `git -C <path>`. A server change is live only after its reviewed commit reaches `main` and the Zeabur deployment is verified; pushing a review branch does not deploy it.
 - New endpoint or scope change in server -> after deploy: re-test affected `arcops` command end-to-end against `https://arcops.cc`.
 
 ## Directory map
@@ -59,8 +59,8 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 - Color is on by default for TTY stderr only. `NO_COLOR` env disables. We never color stdout.
 
 ## Auth & tokens
-- Tokens are minted server-side (`scripts/mint-token.ts` in the server repo). The CLI never creates them. Token format `ts_…` is a server-side contract - kept as-is; changing the prefix would force re-issuing every token.
-- `arcops auth login --token ts_…` saves to `~/.arcops/credentials.json` (mode 0600). Token is sanity-checked against `/api/sites` on login - invalid tokens fail fast.
+- Org-scoped Better Auth API keys are the primary credential. Create and revoke them in Arcops Workspace settings; plaintext is shown once. The CLI never creates a key. Legacy `ts_…` tokens remain accepted through the server's compatibility path but are no longer issued for new users.
+- `arcops auth login --token <api-key>` saves the supplied key verbatim to `~/.arcops/credentials.json` (mode 0600). The CLI is prefix-agnostic, and sanity-checks the key against `/api/sites` so invalid credentials fail fast.
 - Three scopes: `read` (queries), `write` (mutations like archive), `send` (outbound email). Server enforces; CLI doesn't pre-filter.
 - `ARCOPS_API` env overrides API URL (`QUAY_API` read as one-version compat). There is no token env - credentials are file-only or `--token` flag, by design (avoid ambient secrets in shells).
 
