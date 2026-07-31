@@ -47,7 +47,7 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 ## Agent-first contract (KEH-90 S2)
 1. **Failures exit non-zero**: every command audited; `dispatch` catch returns 1, arg-validation exits 2. `--attach` is a repeatable flag (one file per occurrence); a comma-separated value is rejected explicitly rather than ENOENTing.
 2. **Structured error passthrough**: `ApiError` carries the server `code`/`detail`; `emitError` prints `{"error":{code,message,detail?,status?}}` on stderr in JSON mode, `✖ <msg>` in TTY. No bare 502 / `undefined`.
-3. **verify-after-send**: `inbox send` / `reply` / `draft send` re-fetch the thread and confirm an outbound message landed (by `messageId` or vs a pre-send snapshot) before claiming success; a missing outbound exits non-zero.
+3. **verify-after-send**: `inbox send` / `reply` / `draft send` re-fetch the thread and confirm the server-returned outbound `messageId` exists. A response with `delivery.status=queued` is reported as **queued**, never sent; provider completion is a separate durable state. A missing outbound exits non-zero.
 4. **Non-interactive under pipes**: `confirmByTyping` and `resolveBody`'s editor path refuse when `!process.stdin.isTTY`; pass `--yes` / a body flag to run unattended.
 5. **Version / intercept detection**: non-JSON or redirected (CF Access) responses throw `kind: 'intercept'` with a "version mismatch / request intercepted" message. The CLI sends `x-arcops-cli-version` on every request; a server-sent version header would require a server-side change (out of bounds for S2) and is a follow-up.
 

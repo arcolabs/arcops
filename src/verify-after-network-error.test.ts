@@ -6,11 +6,7 @@ import net from 'node:net';
 // with a NETWORK error (fetch failed - the response was lost in transit), the
 // server may already have processed the send. The CLI must establish the real
 // outcome before reporting:
-//   - reply / draft send: probe the (known) thread for a fresh outbound
-//     (landed -> success exit 0; nothing -> failure + safe-to-retry hint;
-//     probe fails -> "status unknown" + manual check, exit 1).
-//   - cold send (r3): no probe - the threadId is unknown and recency-window
-//     probes are racy (gate r1/r2). Instead the CLI re-issues the IDENTICAL
+//   - all three verbs re-issue the IDENTICAL
 //     request with the SAME Idempotency-Key: a processed original replays its
 //     stored result (no duplicate), an unreceived one is completed exactly
 //     once; persistent 409 in_progress / repeated network failure -> "status
@@ -21,7 +17,7 @@ import net from 'node:net';
 // verbatim until it sees the send request line, then destroys both sockets -
 // exactly the production failure mode (request processed, response lost).
 
-type Route = (req: Request, url: URL) => Response;
+type Route = (req: Request, url: URL) => Response | Promise<Response>;
 
 function mockServer(routes: Route[]): Promise<{ base: string; port: number; stop: () => Promise<void> }> {
   const server = Bun.serve({
@@ -29,7 +25,7 @@ function mockServer(routes: Route[]): Promise<{ base: string; port: number; stop
     async fetch(req) {
       const url = new URL(req.url);
       for (const r of routes) {
-        const res = r(req, url);
+        const res = await r(req, url);
         if (res) return res;
       }
       return new Response('not found', { status: 404 });
@@ -110,11 +106,11 @@ function startKillingProxy(upstreamPort: number, cfg: {
 
 const MAIN = resolve(import.meta.dir, 'main.ts');
 
-async function runCli(args: string[]): Promise<{ code: number; stderr: string; stdout: string }> {
+async function runCli(args: string[], timeoutMs = '5000'): Promise<{ code: number; stderr: string; stdout: string }> {
   const proc = Bun.spawn([process.execPath, MAIN, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, ARCOPS_TIMEOUT_MS: '5000' },
+    env: { ...process.env, ARCOPS_TIMEOUT_MS: timeoutMs },
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),
@@ -129,7 +125,7 @@ const SITES_ROUTE = (req: Request, url: URL) =>
     ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] })
     : undefined as unknown as Response;
 
-describe('network-failure verify-after-send (KEH-164): reply', () => {
+describe('network-failure same-key recovery (KEH-164): reply', () => {
   const replyThread = (outboundCreated: boolean) => json({
     thread: { id: 1, subject: 'hello', participant_emails: ['cust@x.com', 'support@sunor.cc'] },
     messages: [
@@ -164,7 +160,7 @@ describe('network-failure verify-after-send (KEH-164): reply', () => {
         '--body', 'hi', '--yes',
       ]);
       expect(res.code).toBe(0);
-      expect(res.stderr).toContain('verify confirms it landed as message #88');
+      expect(res.stderr).toContain('Retrying with the same Idempotency-Key');
       expect(res.stderr).toContain('Reply sent');
     } finally {
       await proxy.close();
@@ -172,13 +168,26 @@ describe('network-failure verify-after-send (KEH-164): reply', () => {
     }
   });
 
-  test('network error and reply NOT landed -> failure + safe-to-retry hint', async () => {
+  test('original did not land -> same-key retry completes it exactly once', async () => {
+    const state = { outboundCreated: false, processed: 0, requests: 0 };
+    const acceptedKeys = new Set<string>();
     const { port, stop } = await mockServer([
       SITES_ROUTE,
       (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
-        ? replyThread(false) : undefined as unknown as Response,
-      // reply POST route intentionally absent: the request dies in the proxy,
-      // the server never processed anything.
+        ? replyThread(state.outboundCreated) : undefined as unknown as Response,
+      (req, url) => {
+        if (url.pathname === '/api/sites/8/inbox/threads/1/reply' && req.method === 'POST') {
+          state.requests += 1;
+          const key = req.headers.get('idempotency-key') ?? '';
+          if (!acceptedKeys.has(key)) {
+            acceptedKeys.add(key);
+            state.processed += 1;
+          }
+          state.outboundCreated = true;
+          return json({ messageId: 88 });
+        }
+        return undefined as unknown as Response;
+      },
     ]);
     const proxy = await startKillingProxy(port, {
       killRequestLine: 'POST /api/sites/8/inbox/threads/1/reply',
@@ -189,17 +198,17 @@ describe('network-failure verify-after-send (KEH-164): reply', () => {
         '--api', proxy.base, 'inbox', 'reply', 'sunor.cc', '1',
         '--body', 'hi', '--yes',
       ]);
-      expect(res.code).not.toBe(0);
-      expect(res.stderr).toContain('NOT sent');
-      expect(res.stderr).toContain('Safe to retry');
-      expect(res.stderr).toContain('idempotency key will replay');
+      expect(res.code).toBe(0);
+      expect(res.stderr).toContain('Reply sent');
+      expect(state.processed).toBe(1);
+      expect(state.requests).toBeGreaterThanOrEqual(1);
     } finally {
       await proxy.close();
       await stop();
     }
   });
 
-  test('network error and verify query also fails -> status unknown + manual check', async () => {
+  test('network error and same-key retries also fail -> status unknown + manual check', async () => {
     const { port, stop } = await mockServer([
       SITES_ROUTE,
       (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
@@ -220,6 +229,70 @@ describe('network-failure verify-after-send (KEH-164): reply', () => {
       expect(res.stderr).toContain('arcops inbox show sunor.cc 1');
     } finally {
       await proxy.close();
+      await stop();
+    }
+  });
+
+  test('response timeout after acceptance recovers with the same key and preserves queued truth', async () => {
+    const state = { outboundCreated: false, posts: 0 };
+    const accepted = {
+      messageId: 88,
+      delivery: { uid: 'idl_timeout_reply', status: 'queued', acceptedAt: '2026-07-31T12:00:00Z' },
+    };
+    const { base, stop } = await mockServer([
+      SITES_ROUTE,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? replyThread(state.outboundCreated) : undefined as unknown as Response,
+      async (req, url) => {
+        if (url.pathname !== '/api/sites/8/inbox/threads/1/reply' || req.method !== 'POST') {
+          return undefined as unknown as Response;
+        }
+        state.posts += 1;
+        state.outboundCreated = true;
+        if (state.posts === 1) await new Promise((resolve) => setTimeout(resolve, 100));
+        return json(accepted, 202);
+      },
+    ]);
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'reply', 'sunor.cc', '1',
+        '--body', 'hi', '--yes', '--output', 'json',
+      ], '20');
+      expect(res.code).toBe(0);
+      expect(state.posts).toBeGreaterThanOrEqual(2);
+      expect(res.stderr).toContain('timeout');
+      expect(res.stderr).toContain('Reply queued');
+      expect(JSON.parse(res.stdout).delivery.uid).toBe('idl_timeout_reply');
+    } finally {
+      await stop();
+    }
+  });
+
+  test('repeated response timeouts exhaust the bounded same-key recovery before reporting unknown', async () => {
+    const state = { posts: 0 };
+    const { base, stop } = await mockServer([
+      SITES_ROUTE,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? replyThread(false) : undefined as unknown as Response,
+      async (req, url) => {
+        if (url.pathname !== '/api/sites/8/inbox/threads/1/reply' || req.method !== 'POST') {
+          return undefined as unknown as Response;
+        }
+        state.posts += 1;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return json({ messageId: 88 }, 200);
+      },
+    ]);
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'reply', 'sunor.cc', '1',
+        '--body', 'hi', '--yes',
+      ], '20');
+      expect(res.code).not.toBe(0);
+      expect(state.posts).toBe(4);
+      expect(res.stderr).toContain('Send status unknown');
+      expect(res.stderr).toContain('arcops inbox show sunor.cc 1');
+    } finally {
       await stop();
     }
   });
@@ -397,7 +470,7 @@ describe('network-failure recovery (KEH-164 r3): cold send via same-key retry', 
   });
 });
 
-describe('network-failure verify-after-send (KEH-164): draft send', () => {
+describe('network-failure same-key recovery (KEH-164): draft send', () => {
   test('network error but the promoted draft landed -> report success, exit 0 (json out)', async () => {
     const state = { sent: false };
     const { port, stop } = await mockServer([
@@ -428,7 +501,7 @@ describe('network-failure verify-after-send (KEH-164): draft send', () => {
         '--yes', '--output', 'json',
       ]);
       expect(res.code).toBe(0);
-      expect(res.stderr).toContain('verify confirms it landed as message #676');
+      expect(res.stderr).toContain('Retrying with the same Idempotency-Key');
       expect(res.stdout).toContain('"messageId": 676');
     } finally {
       await proxy.close();

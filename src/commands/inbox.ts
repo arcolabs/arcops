@@ -69,6 +69,23 @@ type InboxMessageBody = {
   truncated?: boolean;
 };
 
+type DeliveryAcceptance = {
+  uid: string;
+  status: 'queued' | 'sending' | 'sent' | 'failed' | 'unknown';
+  acceptedAt: string;
+};
+
+type ReplySendResult = { messageId: number; delivery?: DeliveryAcceptance };
+type NewSendResult = { threadId: number; messageId: number; delivery?: DeliveryAcceptance };
+
+function sendResultTitle(noun: 'Reply' | 'Email' | 'Draft', delivery?: DeliveryAcceptance): string {
+  if (!delivery || delivery.status === 'sent') return `${noun} sent`;
+  if (delivery.status === 'queued') return `${noun} queued`;
+  if (delivery.status === 'sending') return `${noun} sending`;
+  if (delivery.status === 'failed') return `${noun} delivery failed`;
+  return `${noun} delivery status unknown`;
+}
+
 function requireDraftId(args: { 'draft-id'?: string }): number {
   const id = Number(args['draft-id']);
   if (!Number.isFinite(id)) { error('draft-id required'); process.exit(2); }
@@ -92,10 +109,10 @@ function parseAttachPaths(raw: string | undefined): string[] {
 }
 
 // verify-after-send (contract item 3): after a send-class action returns
-// success, re-fetch the thread and confirm an outbound message actually
-// landed. The server creates the inbox_messages row synchronously in the same
-// request, so if it is missing the email did not send - exit non-zero with a
-// clear cause instead of the old "exit 0 but nothing went out" failure mode.
+// success, re-fetch the thread and confirm the accepted outbound message row
+// exists. With durable delivery this proves Arcops accepted responsibility,
+// not that the provider has sent it; callers must inspect `delivery` before
+// choosing their success language.
 // `expectedMessageId` (from send / draft.send responses) is checked first;
 // otherwise a new outbound vs `preSendOutboundIds` proves the send landed.
 async function verifyOutboundLanded(
@@ -122,51 +139,6 @@ async function verifyOutboundLanded(
       `Re-check with: arcops inbox show <site> ${threadId}`,
     );
   }
-}
-
-// ─── Network-failure recovery (KEH-164) ────────────────────────────────
-// When the send request throws a kind 'network' ApiError (fetch failed - the
-// response was lost in transit, e.g. WSL/Clash blip), the server may already
-// have processed the send. Reporting a bare failure invites a blind retry, so
-// before reporting anything we re-query and check whether a fresh outbound
-// actually landed. ONLY kind 'network' gets this treatment: 'timeout' means
-// the CLI aborted the request itself, and 'api' errors carry a definitive
-// server verdict - both keep their original behavior.
-
-// Client and server clocks can drift; an outbound counts as "fresh" if it was
-// recorded up to this long before the send attempt started.
-const CLOCK_SKEW_ALLOWANCE_MS = 120_000;
-
-type OutboundHit = { threadId: number; messageId: number };
-
-function isFreshOutbound(
-  m: { direction: string; received_at?: string },
-  cutoffMs: number,
-): boolean {
-  if (m.direction !== 'outbound') return false;
-  if (!m.received_at) return true; // no timestamp -> don't disqualify
-  const t = Date.parse(m.received_at);
-  return Number.isNaN(t) || t >= cutoffMs;
-}
-
-// Probe a known thread (reply / draft send) for an outbound that appeared
-// around the send attempt. `preSendOutboundIds` (when the caller already
-// fetched the thread pre-send) additionally excludes pre-existing outbounds.
-async function probeThreadForNewOutbound(
-  auth: { api: string; token: string },
-  siteId: number,
-  threadId: number,
-  opts: { preSendOutboundIds?: Set<number>; sinceMs: number },
-): Promise<OutboundHit | null> {
-  const data = await apiGet<{ messages: Array<{ id: number; direction: string; received_at?: string }> }>(
-    `/api/sites/${siteId}/inbox/threads/${threadId}`,
-    { api: auth.api, token: auth.token },
-  );
-  const cutoff = opts.sinceMs - CLOCK_SKEW_ALLOWANCE_MS;
-  const fresh = data.messages.filter((m) =>
-    !opts.preSendOutboundIds?.has(m.id) && isFreshOutbound(m, cutoff),
-  );
-  return fresh.length > 0 ? { threadId, messageId: fresh[fresh.length - 1].id } : null;
 }
 
 // ─── Cold-send network-failure recovery (KEH-164 round 3) ──────────────
@@ -205,7 +177,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // errors (4xx/5xx, idempotency_conflict) are re-thrown as-is.
 async function resendWithSameKey<T>(opts: {
   send: () => Promise<T>;
-  networkError: ApiError; // the original failure, for the unknown-status message
+  networkError: ApiError; // original network/timeout ambiguity, for diagnostics
   manualCheck: string;    // e.g. `arcops inbox ls <site>`
 }): Promise<T> {
   let lastNetworkError = opts.networkError;
@@ -223,7 +195,7 @@ async function resendWithSameKey<T>(opts: {
         await sleep(waitMs);
         continue;
       }
-      if (e instanceof ApiError && e.kind === 'network') {
+      if (e instanceof ApiError && (e.kind === 'network' || e.kind === 'timeout')) {
         lastNetworkError = e;
         continue;
       }
@@ -249,34 +221,6 @@ async function resendWithSameKey<T>(opts: {
 // idempotency key replays server-side, no duplicate); probe failure -> send
 // status unknown with a manual-check command. Thrown errors surface through
 // dispatch's emitError (JSON envelope in pipe mode, exit 1).
-async function verifyAfterSendNetworkError(opts: {
-  networkError: ApiError;
-  probe: () => Promise<OutboundHit | null>;
-  manualCheck: string; // e.g. `arcops inbox show <site> <thread>`
-}): Promise<OutboundHit> {
-  warn(`Send request failed (network): ${opts.networkError.message}`);
-  info('Verifying whether the outbound actually landed before reporting failure…');
-  let hit: OutboundHit | null;
-  try {
-    hit = await opts.probe();
-  } catch (e) {
-    throw new ApiError(0,
-      `Send request failed (network) and the verify query also failed (${(e as Error).message}). ` +
-      `Send status unknown - confirm manually with: ${opts.manualCheck}`,
-      { kind: 'network' },
-    );
-  }
-  if (!hit) {
-    throw new ApiError(0,
-      `Send request failed (network): ${opts.networkError.message}. ` +
-      `Verify found no new outbound - the message was NOT sent. ` +
-      `Safe to retry: the idempotency key will replay, no duplicate send.`,
-      { kind: 'network' },
-    );
-  }
-  return hit;
-}
-
 // Resolve reply body from any of: --body, --body-file, --template, $EDITOR.
 // Returns { body, source } so callers can label preview output.
 async function resolveBody(args: {
@@ -700,59 +644,51 @@ export async function reply(args: {
   const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
 
   const start = Date.now();
-  // Snapshot pre-send outbound ids (free - the preview GET already ran) so a
-  // network-error probe can tell a freshly landed reply from old outbounds.
-  const preSendOutboundIds = new Set(
-    data.messages.filter((m) => m.direction === 'outbound').map((m) => m.id),
-  );
   // Capture the server-returned messageId so verify-after-send confirms THAT
   // message exists on the thread. This works for both a fresh send (new
   // messageId) AND an idempotent replay (server returns the original messageId
   // without creating a new outbound). The old pre-send-snapshot approach
   // falsely reported failure on replay because no NEW outbound appeared.
-  let result: { messageId: number };
-  try {
-    result = await withSpinner(`Sending reply to ${recipients}…`, async () => {
-      if (attachPaths.length === 0) {
-        return apiPost<{ messageId: number }>(
-          `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-          { api: auth.api, token: auth.token, idempotencyKey, body: { body, ...(bodyHtml ? { bodyHtml } : {}) } },
-        );
-      }
-      const fd = new FormData();
-      fd.append('body', body);
-      if (bodyHtml) fd.append('bodyHtml', bodyHtml);
-      for (const p of attachPaths) {
-        const buf = readFileSync(p);
-        fd.append(
-          'attachments',
-          new Blob([buf], { type: mimeForFile(p) }),
-          basename(p),
-        );
-      }
-      return apiCall<{ messageId: number }>(
+  const doReply = (): Promise<ReplySendResult> => {
+    if (attachPaths.length === 0) {
+      return apiPost<ReplySendResult>(
         `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-        { api: auth.api, token: auth.token, idempotencyKey, method: 'POST', body: fd },
+        { api: auth.api, token: auth.token, idempotencyKey, body: { body, ...(bodyHtml ? { bodyHtml } : {}) } },
       );
-    });
+    }
+    const fd = new FormData();
+    fd.append('body', body);
+    if (bodyHtml) fd.append('bodyHtml', bodyHtml);
+    for (const p of attachPaths) {
+      const buf = readFileSync(p);
+      fd.append('attachments', new Blob([buf], { type: mimeForFile(p) }), basename(p));
+    }
+    return apiCall<ReplySendResult>(
+      `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
+      { api: auth.api, token: auth.token, idempotencyKey, method: 'POST', body: fd },
+    );
+  };
+  let result: ReplySendResult;
+  try {
+    result = await withSpinner(`Sending reply to ${recipients}…`, doReply);
   } catch (e) {
-    // KEH-164: a lost response (network) is not proof of failure - the server
-    // may have processed the reply. Verify before reporting anything.
-    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
-    const hit = await verifyAfterSendNetworkError({
+    if (!(e instanceof ApiError && (e.kind === 'network' || e.kind === 'timeout'))) throw e;
+    warn(`Send response was not confirmed (${e.kind}): ${e.message}`);
+    info('Retrying with the same Idempotency-Key to recover the authoritative acceptance result…');
+    result = await resendWithSameKey({
+      send: doReply,
       networkError: e,
-      probe: () => probeThreadForNewOutbound(auth, site.id, threadId, { preSendOutboundIds, sinceMs: start }),
       manualCheck: `arcops inbox show ${site.domain} ${threadId}`,
     });
-    runSuccess({
-      title: 'Reply sent',
-      elapsedMs: Date.now() - start,
-      extra: `send request failed (network), but verify confirms it landed as message #${hit.messageId}`,
-    });
-    return;
   }
   await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
-  runSuccess({ title: 'Reply sent', elapsedMs: Date.now() - start, extra: recipients });
+  const fmt = detectOutputFormat(args.output);
+  runSuccess({
+    title: sendResultTitle('Reply', result.delivery),
+    elapsedMs: Date.now() - start,
+    extra: result.delivery ? `${recipients} • delivery ${result.delivery.uid}` : recipients,
+  });
+  if (fmt === 'json') return printJson(result);
 }
 
 // ─── Outbound new thread (cold send / customer-initiated chat fallback) ──
@@ -860,9 +796,9 @@ export async function send(args: {
   const start = Date.now();
   // The send request is a named function so the network-error recovery can
   // re-issue the IDENTICAL request (same Idempotency-Key) - see the catch.
-  const doSend = (): Promise<{ threadId: number; messageId: number }> => {
+  const doSend = (): Promise<NewSendResult> => {
     if (attachPaths.length === 0) {
-      return apiPost<{ threadId: number; messageId: number }>(
+      return apiPost<NewSendResult>(
         `/api/sites/${site.id}/inbox/send`,
         {
           api: auth.api, token: auth.token, idempotencyKey,
@@ -888,12 +824,12 @@ export async function send(args: {
     for (const p of attachPaths) {
       fd.append('attachments', new Blob([readFileSync(p)], { type: mimeForFile(p) }), basename(p));
     }
-    return apiPost<{ threadId: number; messageId: number }>(
+    return apiPost<NewSendResult>(
       `/api/sites/${site.id}/inbox/send`,
       { api: auth.api, token: auth.token, idempotencyKey, body: fd },
     );
   };
-  let result: { threadId: number; messageId: number };
+  let result: NewSendResult;
   try {
     result = await withSpinner(`Sending new email to ${toList.join(', ')}…`, doSend);
   } catch (e) {
@@ -902,8 +838,8 @@ export async function send(args: {
     // original replays its stored result (no duplicate), an unprocessed one
     // is completed by this retry - exactly once either way. No probing, no
     // recency windows, race-free by the server's (site_id, key) uniqueness.
-    if (!(e instanceof ApiError && e.kind === 'network')) throw e;
-    warn(`Send request failed (network): ${e.message}`);
+    if (!(e instanceof ApiError && (e.kind === 'network' || e.kind === 'timeout'))) throw e;
+    warn(`Send response was not confirmed (${e.kind}): ${e.message}`);
     info('Retrying with the same Idempotency-Key: a processed send replays its stored result (no duplicate); an unreceived one is completed by this retry, exactly once…');
     result = await resendWithSameKey({
       send: doSend,
@@ -914,9 +850,11 @@ export async function send(args: {
     // messageId must exist on the thread before claiming success.
     await verifyOutboundLanded(auth, site.id, result.threadId, { expectedMessageId: result.messageId });
     runSuccess({
-      title: 'Email sent',
+      title: sendResultTitle('Email', result.delivery),
       elapsedMs: Date.now() - start,
-      extra: `send request failed (network); same-key retry confirms exactly one outbound on thread #${result.threadId} as message #${result.messageId}`,
+      extra: result.delivery
+        ? `delivery ${result.delivery.uid} • thread #${result.threadId} • message #${result.messageId}`
+        : `send request failed (network); same-key retry confirms exactly one outbound on thread #${result.threadId} as message #${result.messageId}`,
     });
     const fmt = detectOutputFormat(args.output);
     if (fmt === 'json') return printJson(result);
@@ -930,11 +868,58 @@ export async function send(args: {
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(result);
   runSuccess({
-    title: 'Email sent',
+    title: sendResultTitle('Email', result.delivery),
     elapsedMs: Date.now() - start,
-    extra: `thread #${result.threadId} • message #${result.messageId}`,
+    extra: result.delivery
+      ? `delivery ${result.delivery.uid} • thread #${result.threadId} • message #${result.messageId}`
+      : `thread #${result.threadId} • message #${result.messageId}`,
   });
 }
+
+// ─── Durable outbound delivery state ──────────────────────────────────
+
+export const delivery = {
+  async show(args: {
+    site?: string; 'delivery-id'?: string;
+    token?: string; api?: string; output?: string;
+  }) {
+    const auth = resolveAuth(args);
+    const site = await resolveSiteOrExit(args.site ?? '', auth);
+    const deliveryId = args['delivery-id']?.trim();
+    if (!deliveryId) { error('delivery-id required'); process.exit(2); }
+    const result = await apiGet<{ delivery: Record<string, unknown> }>(
+      `/api/sites/${site.id}/inbox/deliveries/${encodeURIComponent(deliveryId)}`,
+      { api: auth.api, token: auth.token },
+    );
+    if (detectOutputFormat(args.output) === 'json') return printJson(result);
+    printTable([result.delivery], [
+      'delivery_uid', 'status', 'provider', 'attempt_count', 'message_id', 'updated_at',
+    ]);
+  },
+
+  async retry(args: {
+    site?: string; 'delivery-id'?: string; yes?: string;
+    token?: string; api?: string; output?: string;
+  }) {
+    const auth = resolveAuth(args);
+    const site = await resolveSiteOrExit(args.site ?? '', auth);
+    const deliveryId = args['delivery-id']?.trim();
+    if (!deliveryId) { error('delivery-id required'); process.exit(2); }
+    if (args.yes !== 'true') {
+      const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm retry: `);
+      if (!ok) { error('Retry aborted.'); process.exit(1); }
+    }
+    const result = await apiPost<{ delivery: Record<string, unknown> }>(
+      `/api/sites/${site.id}/inbox/deliveries/${encodeURIComponent(deliveryId)}/retry`,
+      { api: auth.api, token: auth.token },
+    );
+    if (detectOutputFormat(args.output) === 'json') return printJson(result);
+    runSuccess({
+      title: 'Delivery queued',
+      extra: `${deliveryId} • ${site.domain}`,
+    });
+  },
+};
 
 // ─── Draft sub-namespace ──────────────────────────────────────────────
 
@@ -1055,31 +1040,22 @@ export const draft = {
     const idempotencyKey = args['idempotency-key'] ?? deriveDraftSendKey(site.id, draftId);
 
     const start = Date.now();
-    let result: { messageId: number };
+    const doDraftSend = () => apiPost<ReplySendResult>(
+      `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}/send`,
+      { api: auth.api, token: auth.token, idempotencyKey },
+    );
+    let result: ReplySendResult;
     try {
-      result = await withSpinner(`Sending draft #${draftId}…`, async () => {
-        return apiPost<{ messageId: number }>(
-          `/api/sites/${site.id}/inbox/threads/${threadId}/drafts/${draftId}/send`,
-          { api: auth.api, token: auth.token, idempotencyKey },
-        );
-      });
+      result = await withSpinner(`Sending draft #${draftId}…`, doDraftSend);
     } catch (e) {
-      // KEH-164: lost response (network) - the server may have promoted the
-      // draft already. No pre-send snapshot on the --yes path, so the probe
-      // relies on the outbound's timestamp vs the send attempt.
-      if (!(e instanceof ApiError && e.kind === 'network')) throw e;
-      const hit = await verifyAfterSendNetworkError({
+      if (!(e instanceof ApiError && (e.kind === 'network' || e.kind === 'timeout'))) throw e;
+      warn(`Send response was not confirmed (${e.kind}): ${e.message}`);
+      info('Retrying with the same Idempotency-Key to recover the authoritative acceptance result…');
+      result = await resendWithSameKey({
+        send: doDraftSend,
         networkError: e,
-        probe: () => probeThreadForNewOutbound(auth, site.id, threadId, { sinceMs: start }),
         manualCheck: `arcops inbox show ${site.domain} ${threadId}`,
       });
-      runSuccess({
-        title: 'Draft sent',
-        elapsedMs: Date.now() - start,
-        extra: `send request failed (network), but verify confirms it landed as message #${hit.messageId}`,
-      });
-      if (detectOutputFormat(args.output) === 'json') return printJson({ messageId: hit.messageId });
-      return;
     }
     // verify-after-send (contract item 3): confirm the promoted draft landed
     // as an outbound message on the thread.
@@ -1087,9 +1063,11 @@ export const draft = {
     const fmt = detectOutputFormat(args.output);
     if (fmt === 'json') return printJson(result);
     runSuccess({
-      title: 'Draft sent',
+      title: sendResultTitle('Draft', result.delivery),
       elapsedMs: Date.now() - start,
-      extra: `message #${result.messageId}`,
+      extra: result.delivery
+        ? `delivery ${result.delivery.uid} • message #${result.messageId}`
+        : `message #${result.messageId}`,
     });
   },
 

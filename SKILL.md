@@ -279,8 +279,10 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops inbox unassign` | `write` | remote | Clear thread assignee |
 | `arcops inbox archive` | `write` | remote | Archive (close) an inbox thread |
 | `arcops inbox unarchive` | `write` | remote | Reopen a closed thread |
-| `arcops inbox reply` | `send` | remote | Send reply (send scope; preview + typed-confirm unless --yes) |
-| `arcops inbox send` | `send` | remote | Send a new email - creates a fresh thread (send scope) |
+| `arcops inbox reply` | `send` | remote | Queue reply (send scope; preview + typed-confirm unless --yes) |
+| `arcops inbox send` | `send` | remote | Queue a new email - creates a fresh thread (send scope) |
+| `arcops inbox delivery show` | `read` | remote | Show durable outbound delivery state |
+| `arcops inbox delivery retry` | `send` | remote | Retry a failed delivery (send scope) |
 
 ### Inbox drafts
 
@@ -289,7 +291,7 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops inbox draft create` | `write` | remote | Save a draft reply |
 | `arcops inbox draft ls` | `read` | remote | List pending drafts on a thread |
 | `arcops inbox draft show` | `read` | remote | Print a draft body |
-| `arcops inbox draft send` | `send` | remote | Promote a draft to an outbound reply (send scope) |
+| `arcops inbox draft send` | `send` | remote | Queue a draft as an outbound reply (send scope) |
 | `arcops inbox draft rm` | `write` | remote | Discard a draft |
 
 ### Templates (local)

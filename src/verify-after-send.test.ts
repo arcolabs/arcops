@@ -115,6 +115,35 @@ describe('verify-after-send (contract item 3)', () => {
       await stop();
     }
   });
+
+  test('durable acceptance reports queued, never sent', async () => {
+    const { base, stop } = await mockServer([
+      (req, url) => url.pathname === '/api/sites' && req.method === 'GET'
+        ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] }) : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/send' && req.method === 'POST'
+        ? json({
+          threadId: 1,
+          messageId: 99,
+          delivery: { uid: 'idl_123', status: 'queued', acceptedAt: '2026-07-31T12:00:00Z' },
+        }, 202) : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? json({ thread: { id: 1 }, messages: [{ id: 99, direction: 'outbound' }] })
+        : undefined as unknown as Response,
+    ]);
+
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'send', 'sunor.cc',
+        '--to', 'a@b.com', '--subject', 't', '--body', 'hi', '--yes', '--output', 'text',
+      ]);
+      expect(res.code).toBe(0);
+      expect(res.stderr).toContain('Email queued');
+      expect(res.stderr).toContain('idl_123');
+      expect(res.stderr).not.toContain('Email sent');
+    } finally {
+      await stop();
+    }
+  });
 });
 
 describe('verify-after-send: reply idempotent replay (KEH-116 C1)', () => {
@@ -158,6 +187,42 @@ describe('verify-after-send: reply idempotent replay (KEH-116 C1)', () => {
       expect(replyCalled).toEqual(['reply']); // reply fired exactly once
       expect(res.code).toBe(0); // replay succeeds - no false "no outbound landed" failure
       expect(res.stderr).toContain('Reply sent');
+    } finally {
+      await stop();
+    }
+  });
+
+  test('queued reply prints delivery identity as JSON for agents', async () => {
+    const threadJson = () => json({
+      thread: { id: 1, subject: 'hello', participant_emails: ['cust@x.com', 'support@sunor.cc'] },
+      messages: [
+        { id: 50, direction: 'inbound', from_email: 'cust@x.com' },
+        { id: 78, direction: 'outbound' },
+      ],
+    });
+    const { base, stop } = await mockServer([
+      (req, url) => url.pathname === '/api/sites' && req.method === 'GET'
+        ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] }) : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1' && req.method === 'GET'
+        ? threadJson() : undefined as unknown as Response,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads/1/reply' && req.method === 'POST'
+        ? json({
+          messageId: 78,
+          delivery: { uid: 'idl_reply_1', status: 'queued', acceptedAt: '2026-07-31T12:00:00Z' },
+        }, 202) : undefined as unknown as Response,
+    ]);
+    try {
+      const res = await runCli([
+        '--api', base, 'inbox', 'reply', 'sunor.cc', '1',
+        '--body', 'hi', '--yes', '--output', 'json',
+      ]);
+      expect(res.code).toBe(0);
+      expect(JSON.parse(res.stdout)).toEqual({
+        messageId: 78,
+        delivery: { uid: 'idl_reply_1', status: 'queued', acceptedAt: '2026-07-31T12:00:00Z' },
+      });
+      expect(res.stderr).toContain('Reply queued');
+      expect(res.stderr).not.toContain('Reply sent');
     } finally {
       await stop();
     }
