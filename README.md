@@ -21,8 +21,8 @@ Requires Node 20+. The default API is `https://arcops.cc` (override with `--api`
 Onboarding is invite-gated and self-service. With a valid invite code you provision your own org and mint your own key over public routes — no admin hand-off. Full walkthrough (with the exact request shapes) is the **Cold start** section of [`SKILL.md`](./SKILL.md); the short version:
 
 1. Get an invite code — an admin runs `arcops invite create --org-name "<Your Org>"` (the `--org-name` code provisions a new org on redeem).
-2. Sign up with the code: `POST https://arcops.cc/api/auth/sign-up/email` with `{email, password, name, inviteCode}` (or the browser page `https://arcops.cc/login?invite=<code>`) — creates your account + org and returns a session.
-3. Mint an org-scoped API key with that session: `POST https://arcops.cc/api/auth/api-keys` — copy the plaintext key once.
+2. Open `https://arcops.cc/login?invite=<code>` and continue with an Email OTP or Google. Arcops has no password signup or password login.
+3. Open Workspace settings → API keys, create an org-scoped key, and copy the plaintext value once.
 4. `arcops auth login --token <api-key>` — then `arcops site ls`, `revenue`, `traffic`, `verbs`.
 
 API keys are org-scoped Better Auth keys minted at one of three scopes — `read`, `write`, `send` — and are never created by the CLI (legacy `ts_…` tokens are still accepted via dual-read but no longer issued).
