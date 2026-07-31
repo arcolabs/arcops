@@ -1,6 +1,9 @@
 # arcops
 
-`arcops` - agent-first ops cockpit CLI for the [Arcops backend](https://github.com/arcolabs/arcops-server) (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox) across all your sites.
+Agent-native GTM control plane CLI for founder-led PLG products. Arcops gives a
+founder's coding agent deterministic cross-channel facts, lifecycle semantics,
+experiment memory, and bounded actions across acquisition, activation, revenue,
+retention, Search Console, Stripe, and the customer inbox.
 
 Single binary, ~115 KB, one runtime dep (`picocolors`). Built for both humans (TTY) and AI agents (pipe): stdout is always machine-consumable data, stderr carries all progress/diagnostics, and every failure exits non-zero with a structured error envelope.
 

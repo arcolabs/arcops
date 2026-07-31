@@ -170,7 +170,31 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
     );
   }
 
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    const err = e as Error;
+    const code = causeCode(err);
+    const suffix = code ? ` (${code})` : '';
+    throw new ApiError(
+      0,
+      `Response from ${url.host} was interrupted: ${err.message}${suffix}`,
+      { kind: 'network' },
+    );
+  }
+  const declaredLength = res.headers.get('content-length');
+  if (declaredLength && !res.headers.get('content-encoding')) {
+    const expectedBytes = Number(declaredLength);
+    const actualBytes = new TextEncoder().encode(text).byteLength;
+    if (Number.isFinite(expectedBytes) && expectedBytes !== actualBytes) {
+      throw new ApiError(
+        0,
+        `Response from ${url.host} was interrupted: expected ${expectedBytes} bytes, received ${actualBytes}.`,
+        { kind: 'network' },
+      );
+    }
+  }
   const ctype = res.headers.get('content-type') ?? '';
 
   if (!res.ok) {
@@ -253,6 +277,8 @@ export async function apiCall<T = unknown>(path: string, opts: Opts): Promise<T>
 
 export const apiGet    = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'GET' });
 export const apiPost   = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'POST' });
+export const apiPut    = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'PUT' });
+export const apiPatch  = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'PATCH' });
 export const apiDelete = <T = unknown>(path: string, o: Omit<Opts, 'method'>) => apiCall<T>(path, { ...o, method: 'DELETE' });
 
 // 204 No Content / 200 with empty body still come back as undefined from

@@ -30,6 +30,7 @@ describe('to-markdown verb reference', () => {
     expect(md).toContain('### Auth (local)');
     expect(md).toContain('### Inbox lifecycle');
     expect(md).toContain('### Capability discovery (local)');
+    expect(md).toContain('### PLG growth');
   });
 
   test('local verbs are marked local, remote verbs remote', () => {

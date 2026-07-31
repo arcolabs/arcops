@@ -1,6 +1,10 @@
 # arcops (quay-cli) - Project Notes
 
-`arcops` - indie SaaS ops cockpit. Terminal CLI for the [Arcops backend](../quay) (Stripe revenue, traffic, GSC, UTM/funnels, customers, postmaster inbox). Single binary, ~76KB, used by Kai + 2 technical teammates. Published to npm as `@arcolab/arcops`.
+`arcops` is the terminal interface to the Arcops agent-native GTM control plane
+for founder-led PLG products. It gives a founder's coding agent deterministic
+cross-channel facts, lifecycle semantics, experiment memory, and bounded actions
+across acquisition, activation, revenue, retention, Search Console, Stripe, and
+the customer inbox. Published to npm as `@arcolab/arcops`.
 
 **Naming history**: previously `traffic-source-cli` (binary `ts`, backend `traffic-source/`) -> `quay` (binary `quay`, package `@tritonix/quay`) -> `arcops` (binary `arcops`, package `@arcolab/arcops`). The local checkout dir is still `~/projects/saas/quay-cli/` and the server repo is still `~/projects/saas/quay/` (local paths unchanged; git remotes point at `arcolabs/arcops` and `arcolabs/arcops-server`). Token prefix `ts_` is a server-side contract and stays unchanged. Zeabur project / CF Access app names may still reference old slugs - that's a separate, costly rename and stays deferred.
 

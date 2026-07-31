@@ -1,11 +1,15 @@
 ---
 name: arcops
-description: Drive the arcops SaaS ops cockpit CLI (@arcolab/arcops) from Claude Code / Codex. Install, authenticate, and query Stripe revenue, traffic, GSC, UTM funnels, customers, and the postmaster inbox across all sites in an organization.
+description: Drive the Arcops agent-native GTM control plane CLI (@arcolab/arcops) from Claude Code or Codex. Observe and act on PLG acquisition, activation, revenue, retention, experiments, signals, Search Console, Stripe, and the customer inbox.
 ---
 
-# arcops - SaaS ops cockpit CLI
+# arcops — agent-native GTM control plane CLI
 
-`arcops` is the terminal interface to [Arcops](https://github.com/arcolabs/arcops-server): an agent-first ops cockpit for indie founders and small teams running multiple sites. It exposes revenue, traffic, GSC, UTM/funnel attribution, customers, and a postmaster inbox as structured, scriptable commands.
+`arcops` is the terminal interface to [Arcops](https://github.com/arcolabs/arcops-server):
+the deterministic data and action layer that lets a founder's coding agent run
+PLG growth loops from acquisition through activation, revenue, retention, and
+measured experiment readback. It also exposes Search Console, Stripe, traffic,
+attribution, and the customer inbox as structured, scriptable commands.
 
 This skill teaches Claude Code / Codex how to install, authenticate, and drive `arcops` without human hand-holding. The verb reference below is generated from the same registry that `arcops verbs --json` serializes, so it can never drift from the binary.
 
@@ -328,6 +332,29 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 
 **`arcops org ls`**: Lists organizations where the caller is an owner or admin member via the org-admin wrap endpoint (GET /api/orgs, arcops-server #35 / KEH-197). The server requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better Auth user, or a browser/CF-Access session; org-scoped BA api-keys are refused with 403 org_admin_required (no attributable user to list orgs for) - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Cross-tenant safe by construction: the query JOINs on the caller's member rows, so a non-member's org is never returned (no existence leak); plain-member orgs are excluded - only orgs you own/admin appear. Returns id, name, slug, your role (owner/admin), and createdAt.
 **`arcops org create`**: Creates an organization with the caller as owner via the org-admin wrap endpoint (POST /api/orgs, arcops-server #35 / KEH-197). The server requires an IDENTIFIED HUMAN admin - a ts_ token bridged to a Better Auth user, or a browser/CF-Access session; org-scoped BA api-keys are refused with 403 org_admin_required (no attributable creator to own the org), and a read-scope key is refused earlier with 403 insufficient_scope - so this verb uses the normal `arcops auth login` human token, not an org-scoped key. Reuses the better-auth organization plugin's own createOrganization (system-action mode), so the org is indistinguishable from one created in the UI. --name is required (1-100 chars); --slug is optional and must be lowercase letters, digits, and single hyphens between (e.g. my-org, <= 60 chars) - when omitted it is derived from the name (e.g. "My Org" -> my-org). A duplicate slug is refused with 409 org_already_exists; bad name/slug returns 422 invalid_input (with detail.field). Returns the created org (id, name, slug, your owner role, createdAt).
+
+### PLG growth
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops growth identity upsert` | `write` | remote | Upsert product user/account identity and trusted Stripe link |
+| `arcops growth lifecycle show` | `read` | remote | Show active and historical PLG lifecycle definitions |
+| `arcops growth lifecycle set` | `write` | remote | Activate a new immutable lifecycle definition |
+| `arcops growth outcomes` | `read` | remote | Show acquisition → activation → paid → retained outcomes |
+| `arcops growth experiment ls` | `read` | remote | List PLG growth experiments |
+| `arcops growth experiment show` | `read` | remote | Show an experiment with releases and readbacks |
+| `arcops growth experiment create` | `write` | remote | Register an experiment measurement contract |
+| `arcops growth experiment update` | `write` | remote | Update a draft contract or transition experiment status |
+| `arcops growth experiment readback` | `write` | remote | Measure an experiment and record an explicit decision |
+| `arcops growth release ls` | `read` | remote | List releases in the growth ledger |
+| `arcops growth release create` | `write` | remote | Record a deployed release |
+| `arcops growth signal ls` | `read` | remote | List deterministic PLG opportunity and risk signals |
+| `arcops growth signal refresh` | `write` | remote | Refresh deterministic signals and state transitions |
+| `arcops growth signal ack` | `write` | remote | Acknowledge an open growth signal |
+| `arcops growth signal resolve` | `write` | remote | Resolve a growth signal with a required note |
+| `arcops growth doctor` | `read` | remote | Diagnose PLG instrumentation, identity, revenue, and signal readiness |
+
+**`arcops growth identity upsert`**: Creates or updates stable product users/accounts, optional account membership, anonymous visitor linkage, and an authenticated Stripe customer link.
 
 <!-- END VERB REFERENCE -->
 

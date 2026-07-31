@@ -171,7 +171,9 @@ export function saveConfig(c: Config) {
 // never accepted for tokens). Never accept a token from env - force explicit
 // file or --token to avoid ambient secrets in shells.
 export function resolveAuth(flags: { token?: string; api?: string }): Credentials {
-  const file = loadCredentials();
+  // A fully explicit agent invocation is self-contained and must not inspect
+  // or migrate the interactive user's credential files.
+  const file = flags.token && flags.api ? {} : loadCredentials();
   const api = flags.api ?? resolveApiEnv() ?? file.api ?? DEFAULT_API;
   const token = flags.token ?? file.token ?? '';
   return { api, token };

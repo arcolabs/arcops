@@ -226,9 +226,9 @@ function renderRoot(colored: boolean): string {
   const line = '─'.repeat(50);
   out.push('');
   if (colored) {
-    out.push(`${pc.cyan('arcops')} ${pc.dim('- indie SaaS ops cockpit')} ${pc.dim(`v${VERSION}`)}`);
+    out.push(`${pc.cyan('arcops')} ${pc.dim('- agent-native PLG GTM control plane')} ${pc.dim(`v${VERSION}`)}`);
   } else {
-    out.push(`arcops - indie SaaS ops cockpit v${VERSION}`);
+    out.push(`arcops - agent-native PLG GTM control plane v${VERSION}`);
   }
   out.push(line);
   out.push(`${dim('Usage:')} arcops <command> [args] [--flags]`);
