@@ -20,6 +20,7 @@ import * as gsc from './gsc';
 import * as growth from './growth';
 import * as inbox from './inbox';
 import * as invite from './invite';
+import * as integration from './integration';
 import * as org from './org';
 import * as overview from './overview';
 import * as profile from './profile';
@@ -171,6 +172,14 @@ export const COMMANDS: CommandDef[] = [
     positional: ['site'], flags: [{ name: '--days', type: 'number' }, { name: '--limit', type: 'number' }, '--output'],
     examples: ['gsc country acme.com --days 28'],
     handler: (a) => gsc.country({ site: a.site, days: a.days, limit: a.limit, token: a.token, api: a.api, output: a.output }) },
+  { path: ['integration', 'ls'], summary: 'List integration grants, bindings, and effective routes',
+    flags: ['--site', '--output'],
+    examples: ['integration ls', 'integration ls --site acme.com'],
+    handler: (a) => integration.ls(a) },
+  { path: ['integration', 'doctor'], summary: 'Read a cached Integration Doctor snapshot',
+    positional: ['provider'], flags: ['--grant', '--site', '--output'],
+    examples: ['integration doctor email', 'integration doctor search-console --site acme.com', 'integration doctor bing --grant bing_abc123'],
+    handler: (a) => integration.doctor({ ...a, provider: a.provider }) },
   { path: ['customer', 'ls'], summary: 'List customers',
     positional: ['site'], flags: ['--output'],
     examples: ['customer ls acme.com'],

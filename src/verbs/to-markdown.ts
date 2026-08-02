@@ -24,6 +24,7 @@ const CATEGORY_ORDER = [
   'Analytics',
   'Campaigns & funnels',
   'Search (GSC)',
+  'Integrations',
   'Customers & attribution',
   'Inbox lifecycle',
   'Inbox drafts',
@@ -43,6 +44,7 @@ export function categoryOf(v: VerbDef): string {
   if (id === 'revenue' || id === 'traffic') return 'Analytics';
   if (id.startsWith('campaign:') || id.startsWith('funnel:')) return 'Campaigns & funnels';
   if (id.startsWith('gsc:')) return 'Search (GSC)';
+  if (id.startsWith('integration:')) return 'Integrations';
   if (id.startsWith('customer:') || id.startsWith('attribution:')) return 'Customers & attribution';
   if (id.startsWith('inbox:draft:')) return 'Inbox drafts';
   if (id.startsWith('inbox:')) return 'Inbox lifecycle';

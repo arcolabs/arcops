@@ -9,6 +9,17 @@ export function resolveSiteFromList(input: string, sites: SiteRef[]): SiteRef | 
   return sites.find(s => s.domain === input) ?? null;
 }
 
+/**
+ * Numeric site ids are already an unambiguous site-scoped reference. Keep
+ * them local so a site-constrained API key never needs the workspace site
+ * collection just to reach a site-scoped endpoint.
+ */
+export function parsePositiveSiteId(input: string): number | null {
+  if (!/^\d+$/.test(input)) return null;
+  const id = Number(input);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
 import { apiGet } from '../api';
 import { type Credentials } from '../config';
 import { error } from '../output';

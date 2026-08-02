@@ -426,6 +426,40 @@ export const VERBS: VerbDef[] = [
     outputShape: 'unknown',
   },
 
+  // ── Integration Control Plane v2 (read-only agent surface) ─────────
+  {
+    id: 'integration:ls',
+    name: 'List integrations',
+    summary: 'List integration grants, bindings, and effective routes',
+    description: 'Read-only workspace or site integration inventory. It never refreshes credentials, calls a provider, or executes remediation.',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'site', type: 'string', description: 'Optional site id or domain; omit for workspace scope.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['integration ls', 'integration ls --site acme.com'],
+    http: { method: 'GET', path: '/api/integrations', query: ['site_id'] },
+    outputShape: 'IntegrationListResponse',
+  },
+  {
+    id: 'integration:doctor',
+    name: 'Integration Doctor',
+    summary: 'Read a cached Integration Doctor snapshot',
+    description: 'Returns deterministic grant, binding, route, health, and freshness checks. Credential writes and remediation remain Web-only human-admin actions.',
+    scope: 'read',
+    idempotent: true,
+    args: [
+      { name: 'provider', type: 'enum', required: true, positional: true, enum: ['email', 'search-console', 'bing', 'stripe'], description: 'Integration provider family.' },
+      { name: 'grant_uid', cliName: 'grant', type: 'string', description: 'Opaque grant id when a workspace provider has multiple grants.' },
+      { name: 'site', type: 'string', description: 'Optional site id or domain; omit for workspace scope.' },
+      { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
+    ],
+    examples: ['integration doctor email', 'integration doctor search-console --site acme.com', 'integration doctor bing --grant bing_abc123'],
+    http: { method: 'GET', path: '/api/integrations/:provider/doctor', query: ['grant_uid'] },
+    outputShape: 'IntegrationDoctorResponse',
+  },
+
   // ── Customers / attribution ──────────────────────────────────────────
   {
     id: 'customer:ls',

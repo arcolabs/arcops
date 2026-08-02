@@ -241,6 +241,16 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops gsc page` | `read` | remote | GSC top pages |
 | `arcops gsc country` | `read` | remote | GSC top countries |
 
+### Integrations
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops integration ls` | `read` | remote | List integration grants, bindings, and effective routes |
+| `arcops integration doctor` | `read` | remote | Read a cached Integration Doctor snapshot |
+
+**`arcops integration ls`**: Read-only workspace or site integration inventory. It never refreshes credentials, calls a provider, or executes remediation.
+**`arcops integration doctor`**: Returns deterministic grant, binding, route, health, and freshness checks. Credential writes and remediation remain Web-only human-admin actions.
+
 ### Customers & attribution
 
 | Command | Scope | Kind | Summary |
