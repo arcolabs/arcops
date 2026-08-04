@@ -898,20 +898,24 @@ export const delivery = {
   },
 
   async retry(args: {
-    site?: string; 'delivery-id'?: string; yes?: string;
+    site?: string; 'delivery-id'?: string; 'confirm-duplicate-risk'?: string; yes?: string;
     token?: string; api?: string; output?: string;
   }) {
     const auth = resolveAuth(args);
     const site = await resolveSiteOrExit(args.site ?? '', auth);
     const deliveryId = args['delivery-id']?.trim();
     if (!deliveryId) { error('delivery-id required'); process.exit(2); }
+    const confirmDuplicateRisk = args['confirm-duplicate-risk'] === 'true';
     if (args.yes !== 'true') {
-      const ok = await confirmByTyping(site.domain, `Type the site domain (${site.domain}) to confirm retry: `);
+      const prompt = confirmDuplicateRisk
+        ? `Provider acceptance is uncertain. Retrying may send a duplicate email. Type the site domain (${site.domain}) to accept this risk: `
+        : `Type the site domain (${site.domain}) to confirm retry: `;
+      const ok = await confirmByTyping(site.domain, prompt);
       if (!ok) { error('Retry aborted.'); process.exit(1); }
     }
     const result = await apiPost<{ delivery: Record<string, unknown> }>(
       `/api/sites/${site.id}/inbox/deliveries/${encodeURIComponent(deliveryId)}/retry`,
-      { api: auth.api, token: auth.token },
+      { api: auth.api, token: auth.token, body: { confirmDuplicateRisk } },
     );
     if (detectOutputFormat(args.output) === 'json') return printJson(result);
     runSuccess({

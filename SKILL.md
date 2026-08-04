@@ -274,7 +274,7 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops inbox reply` | `send` | remote | Queue reply (send scope; preview + typed-confirm unless --yes) |
 | `arcops inbox send` | `send` | remote | Queue a new email - creates a fresh thread (send scope) |
 | `arcops inbox delivery show` | `read` | remote | Show durable outbound delivery state |
-| `arcops inbox delivery retry` | `send` | remote | Retry a failed delivery (send scope) |
+| `arcops inbox delivery retry` | `send` | remote | Retry a failed delivery or explicitly retry an uncertain delivery (send scope) |
 
 ### Inbox drafts
 

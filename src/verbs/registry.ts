@@ -699,17 +699,18 @@ export const VERBS: VerbDef[] = [
   {
     id: 'inbox:delivery:retry',
     name: 'Retry inbox delivery',
-    summary: 'Retry a failed delivery (send scope)',
+    summary: 'Retry a failed delivery or explicitly retry an uncertain delivery (send scope)',
     scope: 'send',
     idempotent: true,
     args: [
       { name: 'site', type: 'string', required: true, positional: true, description: 'Site id or domain.' },
-      { name: 'delivery_id', cliName: 'delivery-id', type: 'string', required: true, positional: true, description: 'Failed delivery uid.' },
+      { name: 'delivery_id', cliName: 'delivery-id', type: 'string', required: true, positional: true, description: 'Failed or uncertain delivery uid.' },
+      { name: 'confirm_duplicate_risk', cliName: 'confirm-duplicate-risk', type: 'boolean', description: 'Explicitly accept the risk of a duplicate email when retrying a delivery whose provider acceptance is uncertain.' },
       { name: 'yes', type: 'boolean', cliOnly: true, description: 'Skip interactive confirmation.' },
       { name: 'output', type: 'string', cliOnly: true, description: 'Output format: text or json.' },
     ],
     examples: ['inbox delivery retry acme.com idl_123 --yes'],
-    http: { method: 'POST', path: '/api/sites/:siteId/inbox/deliveries/:deliveryId/retry' },
+    http: { method: 'POST', path: '/api/sites/:siteId/inbox/deliveries/:deliveryId/retry', body: ['confirmDuplicateRisk'] },
     outputShape: 'unknown',
   },
 
