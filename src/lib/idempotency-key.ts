@@ -34,8 +34,15 @@ export function deriveReplyKey(
   threadId: number,
   body: string,
   attachPaths: string[],
+  replyAll = false,
 ): string {
-  return `arcops-reply-${siteId}-${threadId}-${sha256hex(body + '\n' + hashAttachmentPaths(attachPaths))}`;
+  const base = `arcops-reply-${siteId}-${threadId}-${sha256hex(body + '\n' + hashAttachmentPaths(attachPaths))}`;
+  // Reply-all and sender-only are DIFFERENT logical operations (the server's
+  // fingerprint includes replyAll), so they must not share an idempotency key
+  // - a same-body sender-only retry would otherwise 409 against a prior
+  // reply-all send. The suffix only applies when replyAll=true, keeping the
+  // default key byte-identical to pre-reply-all CLI versions.
+  return replyAll ? `${base}::reply-all` : base;
 }
 
 export function deriveSendKey(

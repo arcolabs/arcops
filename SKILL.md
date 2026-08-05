@@ -108,6 +108,13 @@ Onboarding is invite-gated and self-service: given a valid invite code you provi
 - **stdout = data only.** stderr carries diagnostics, spinners, success ticks, and errors.
 - TTY -> human-readable text; pipe/redirect -> JSON. Override with `--output text|json`.
 - `NO_COLOR=1` disables stderr color. stdout is never colored.
+- **Send verbs always leave a success marker on stdout.** `inbox reply`, `inbox send`, and
+  `inbox draft send` write the result to stdout in every mode: `--output json` (or a pipe)
+  emits the full `{messageId, delivery?}` object; text mode emits one stable line
+  (`Reply sent (message #102), delivery idl_abc`). A send verb that exits `0` has already
+  verified the outbound message landed (verify-after-send) - do not treat an empty stdout as
+  "not sent" and resend; the Idempotency-Key makes a retry safe, but it is unnecessary after
+  exit `0`.
 
 Exit codes:
 
@@ -169,13 +176,22 @@ arcops attribution diag <site> --output json          # attribution coverage hea
 
 ```bash
 arcops inbox ls <site> --status open --unread --output json
+arcops inbox search <term> --output json               # cross-site: which site does this mail live on?
 arcops inbox show <site> <thread-id> --output json
 arcops inbox show <site> <thread-id> --full --output json   # full bodies (body_text/body_html); truncated messages carry body_truncated=true
+arcops inbox reply <site> <thread-id> --body "Thanks - looking into this." --yes   # replies to the LAST inbound sender only
+arcops inbox reply <site> <thread-id> --body "Thanks." --yes --reply-all           # cc the other participants
 arcops inbox draft create <site> <thread-id> --body "Thanks - looking into this."
 arcops inbox draft send <site> <thread-id> <draft-id> --yes   # send scope; verify-after-send
 ```
 
 For agent use, always provide the body via `--body`, `--body-file`, or `--template`. Never rely on `$EDITOR` in a non-TTY session.
+
+**Reply recipients (preview = reality).** `inbox reply` replies to the **last inbound
+sender only** by default - third-party helpdesks on the thread are NOT cc'd. Pass
+`--reply-all` to cc the other participants. The preview shows the exact recipients
+(`To:` / `Cc:`, own-domain addresses filtered), and the wire request carries the same
+`replyAll` value, so what the preview says is what gets sent.
 
 ### Revenue (营收)
 
@@ -264,6 +280,7 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | Command | Scope | Kind | Summary |
 | --- | --- | --- | --- |
 | `arcops inbox ls` | `read` | remote | List inbox threads (cursor-paginated via --cursor) |
+| `arcops inbox search` | `read` | local | Search thread subjects across all sites (subject match) |
 | `arcops inbox show` | `read` | remote | Show thread + messages (does not mark read; use `inbox read`) |
 | `arcops inbox read` | `write` | remote | Mark thread as read (clears unread_for_ops) |
 | `arcops inbox snooze` | `write` | remote | Snooze thread until --until (3d / tomorrow / ISO) |

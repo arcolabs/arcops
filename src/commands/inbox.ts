@@ -8,6 +8,7 @@ import { apiCall, apiGet, apiPost, apiDelete, ApiError } from '../api';
 import {
   detectOutputFormat, printJson, printTable,
   error, success, info, warn, withSpinner, runSuccess,
+  type OutputFormat,
 } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 import { openEditor } from '../lib/editor';
@@ -84,6 +85,44 @@ function sendResultTitle(noun: 'Reply' | 'Email' | 'Draft', delivery?: DeliveryA
   if (delivery.status === 'sending') return `${noun} sending`;
   if (delivery.status === 'failed') return `${noun} delivery failed`;
   return `${noun} delivery status unknown`;
+}
+
+// Send-class success output (output discipline: stdout = data). JSON mode
+// emits the full result object for machine parsing. Text mode emits ONE stable
+// stdout success line carrying the outbound messageId (and delivery uid when
+// present) so an agent can key success on stdout even without --output json -
+// previously text-mode send success wrote NOTHING to stdout, which broke the
+// "stdout carries the {threadId,messageId} success marker" contract and could
+// drive a contract-trusting agent into a duplicate resend. The ✓ decoration
+// stays on stderr.
+function printSendSuccess(opts: {
+  fmt: OutputFormat;
+  noun: 'Reply' | 'Email' | 'Draft';
+  messageId: number;
+  threadId?: number;
+  delivery?: DeliveryAcceptance;
+  result?: unknown;
+  elapsedMs: number;
+  // Used when delivery is absent (e.g. a same-key network retry that
+  // confirmed exactly one outbound without a delivery record): appended to the
+  // text-mode stdout line and shown as the stderr completion detail.
+  note?: string;
+}): void {
+  if (opts.fmt === 'json') {
+    printJson(opts.result);
+  } else {
+    const where = opts.threadId !== undefined
+      ? `thread #${opts.threadId} message #${opts.messageId}`
+      : `message #${opts.messageId}`;
+    process.stdout.write(
+      `${opts.noun} sent (${where})${opts.delivery ? `, delivery ${opts.delivery.uid}` : ''}${opts.note ? ` - ${opts.note}` : ''}\n`,
+    );
+  }
+  runSuccess({
+    title: sendResultTitle(opts.noun, opts.delivery),
+    elapsedMs: opts.elapsedMs,
+    extra: opts.delivery ? `delivery ${opts.delivery.uid}` : opts.note,
+  });
 }
 
 function requireDraftId(args: { 'draft-id'?: string }): number {
@@ -403,6 +442,60 @@ export async function ls(args: {
   }
 }
 
+// Cross-site inbox search: `arcops inbox search <term>`. `inbox ls --search`
+// is single-site, but "which site does this customer's mail live on?" is a
+// cross-cutting question (a customer can mail any of the founder's products).
+// This verb fans the same subject-search out across every readable site and
+// annotates each hit with site_domain so an agent can route without a manual
+// `for s in site; inbox ls $s --search ...` loop.
+export async function search(args: {
+  term?: string;
+  status?: string; unread?: string; limit?: string;
+  token?: string; api?: string; output?: string;
+}) {
+  const auth = resolveAuth(args);
+  const term = (args.term ?? '').trim();
+  if (!term) { error('search term required: arcops inbox search <term>'); process.exit(2); }
+
+  const { sites } = await apiGet<{ sites: { id: number; domain: string }[] }>('/api/sites', auth);
+  if (sites.length === 0) { error('No sites available in this org.'); process.exit(1); }
+
+  // Per-site cap: cross-site scans are for routing, not deep paging. Clamp
+  // into [1, 50] so a stray --limit can't hammer every site with one huge page.
+  const perSiteLimit = Math.min(Math.max(parseInt(args.limit ?? '10', 10) || 10, 1), 50);
+  const query: Record<string, string | number> = { search: term, limit: perSiteLimit };
+  if (args.status) query.status = args.status;
+  if (args.unread === 'true') query.unread = 'true';
+
+  // Fan out concurrently. One failing site (e.g. no inbox for a fresh site)
+  // must not sink the whole scan - the failure is surfaced as a warn and the
+  // remaining sites still report.
+  const perSite = await Promise.all(sites.map(async (site) => {
+    try {
+      const data = await apiGet<{ threads: Record<string, unknown>[] }>(
+        `/api/sites/${site.id}/inbox/threads`,
+        { api: auth.api, token: auth.token, query },
+      );
+      return data.threads.map((t) => ({ ...t, site_id: site.id, site_domain: site.domain }));
+    } catch (e) {
+      warn(`inbox search skipped ${site.domain}: ${(e as Error).message}`);
+      return [];
+    }
+  }));
+  const threads = perSite.flat();
+
+  const fmt = detectOutputFormat(args.output);
+  if (fmt === 'json') {
+    return printJson({ search: term, sites_scanned: sites.length, threads });
+  }
+  if (threads.length === 0) {
+    info(`No threads matching "${term}" across ${sites.length} sites.`);
+    return;
+  }
+  info(`${threads.length} thread(s) matching "${term}" across ${sites.length} sites:`);
+  printTable(threads, ['site_domain', 'id', 'subject', 'last_message_at', 'status', 'unread_for_ops']);
+}
+
 export async function show(args: {
   site?: string; 'thread-id'?: string; full?: string;
   token?: string; api?: string; output?: string;
@@ -572,7 +665,7 @@ type ThreadShowResult = {
 export async function reply(args: {
   site?: string; 'thread-id'?: string;
   body?: string; 'body-file'?: string; template?: string;
-  attach?: string; quote?: string; yes?: string;
+  attach?: string; quote?: string; 'reply-all'?: string; yes?: string;
   'dry-run'?: string;
   'idempotency-key'?: string;
   token?: string; api?: string; output?: string;
@@ -602,8 +695,36 @@ export async function reply(args: {
   const bodyHtml = renderBodyHtml(body);
 
   const attachPaths = parseAttachPaths(args.attach);
-  const recipients = data.thread.participant_emails.join(', ');
   const subject = data.thread.subject || 'Re: (no subject)';
+
+  // Recipient contract (mirrors the server's sendReply rules):
+  //   - To = the last inbound sender (never our own address/domain).
+  //   - Cc = the other thread participants ONLY under --reply-all (the server
+  //     computes the authoritative CC from the last inbound message's to/cc;
+  //     this preview is the participant-set approximation).
+  //   - The old preview listed every participant_emails (including our own
+  //     support address) - a reply-all-looking lie: the wire request never
+  //     set replyAll, so the server only replied to the sender. Preview and
+  //     reality now agree.
+  const replyAll = args['reply-all'] === 'true';
+  const ownDomain = `@${site.domain}`;
+  const fromAddress = `support@${site.domain}`;
+  const toList = (
+    lastInboundFrom
+    && lastInboundFrom.toLowerCase() !== fromAddress.toLowerCase()
+    && !lastInboundFrom.toLowerCase().endsWith(ownDomain)
+  )
+    ? [lastInboundFrom]
+    : data.thread.participant_emails.filter((e) => e && !e.toLowerCase().endsWith(ownDomain));
+  const ccList = replyAll
+    ? data.thread.participant_emails.filter((e) => {
+      const n = (e ?? '').toLowerCase();
+      return n && !n.endsWith(ownDomain) && !toList.some((t) => t.toLowerCase() === n);
+    })
+    : [];
+  const toRecipients = toList.join(', ');
+  const ccRecipients = ccList.join(', ');
+  const recipients = ccRecipients ? `${toRecipients} (cc: ${ccRecipients})` : toRecipients;
 
   // KEH-278 C: dry-run renders the would-be reply and stops - no send, no
   // idempotency key, no draft, no confirm. bodyHtml above is the same render
@@ -613,7 +734,8 @@ export async function reply(args: {
       action: 'reply',
       output: args.output,
       from: `support@${site.domain}`,
-      to: data.thread.participant_emails,
+      to: toList,
+      cc: ccList,
       subject,
       bodyText: body,
       bodyHtml,
@@ -625,6 +747,7 @@ export async function reply(args: {
   process.stderr.write(`\n─ Reply preview ─────────────────────────────────────\n`);
   process.stderr.write(`Site:     ${site.domain}\n`);
   process.stderr.write(`To:       ${recipients}\n`);
+  process.stderr.write(`Mode:     ${replyAll ? 'reply-all (cc other participants)' : 'reply to sender only'}\n`);
   process.stderr.write(`Subject:  ${subject}\n`);
   process.stderr.write(`Source:   ${source}\n`);
   if (attachPaths.length > 0) {
@@ -641,7 +764,7 @@ export async function reply(args: {
 
   // C1/KEH-116: stable Idempotency-Key so a retry replays the first result on
   // the server instead of sending a second reply. --idempotency-key overrides.
-  const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths);
+  const idempotencyKey = args['idempotency-key'] ?? deriveReplyKey(site.id, threadId, body, attachPaths, replyAll);
 
   const start = Date.now();
   // Capture the server-returned messageId so verify-after-send confirms THAT
@@ -653,11 +776,12 @@ export async function reply(args: {
     if (attachPaths.length === 0) {
       return apiPost<ReplySendResult>(
         `/api/sites/${site.id}/inbox/threads/${threadId}/reply`,
-        { api: auth.api, token: auth.token, idempotencyKey, body: { body, ...(bodyHtml ? { bodyHtml } : {}) } },
+        { api: auth.api, token: auth.token, idempotencyKey, body: { body, replyAll, ...(bodyHtml ? { bodyHtml } : {}) } },
       );
     }
     const fd = new FormData();
     fd.append('body', body);
+    fd.append('replyAll', String(replyAll));
     if (bodyHtml) fd.append('bodyHtml', bodyHtml);
     for (const p of attachPaths) {
       const buf = readFileSync(p);
@@ -682,13 +806,14 @@ export async function reply(args: {
     });
   }
   await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
-  const fmt = detectOutputFormat(args.output);
-  runSuccess({
-    title: sendResultTitle('Reply', result.delivery),
+  printSendSuccess({
+    fmt: detectOutputFormat(args.output),
+    noun: 'Reply',
+    messageId: result.messageId,
+    delivery: result.delivery,
+    result,
     elapsedMs: Date.now() - start,
-    extra: result.delivery ? `${recipients} • delivery ${result.delivery.uid}` : recipients,
   });
-  if (fmt === 'json') return printJson(result);
 }
 
 // ─── Outbound new thread (cold send / customer-initiated chat fallback) ──
@@ -849,15 +974,18 @@ export async function send(args: {
     // Same contract-item-3 guarantee as the normal path: the reported
     // messageId must exist on the thread before claiming success.
     await verifyOutboundLanded(auth, site.id, result.threadId, { expectedMessageId: result.messageId });
-    runSuccess({
-      title: sendResultTitle('Email', result.delivery),
+    printSendSuccess({
+      fmt: detectOutputFormat(args.output),
+      noun: 'Email',
+      messageId: result.messageId,
+      threadId: result.threadId,
+      delivery: result.delivery,
+      result,
       elapsedMs: Date.now() - start,
-      extra: result.delivery
-        ? `delivery ${result.delivery.uid} • thread #${result.threadId} • message #${result.messageId}`
-        : `send request failed (network); same-key retry confirms exactly one outbound on thread #${result.threadId} as message #${result.messageId}`,
+      note: result.delivery
+        ? undefined
+        : `same-key retry confirms exactly one outbound on thread #${result.threadId} as message #${result.messageId}`,
     });
-    const fmt = detectOutputFormat(args.output);
-    if (fmt === 'json') return printJson(result);
     return;
   }
 
@@ -865,14 +993,14 @@ export async function send(args: {
   // server reported actually landed on the thread before claiming success.
   await verifyOutboundLanded(auth, site.id, result.threadId, { expectedMessageId: result.messageId });
 
-  const fmt = detectOutputFormat(args.output);
-  if (fmt === 'json') return printJson(result);
-  runSuccess({
-    title: sendResultTitle('Email', result.delivery),
+  printSendSuccess({
+    fmt: detectOutputFormat(args.output),
+    noun: 'Email',
+    messageId: result.messageId,
+    threadId: result.threadId,
+    delivery: result.delivery,
+    result,
     elapsedMs: Date.now() - start,
-    extra: result.delivery
-      ? `delivery ${result.delivery.uid} • thread #${result.threadId} • message #${result.messageId}`
-      : `thread #${result.threadId} • message #${result.messageId}`,
   });
 }
 
@@ -1064,14 +1192,13 @@ export const draft = {
     // verify-after-send (contract item 3): confirm the promoted draft landed
     // as an outbound message on the thread.
     await verifyOutboundLanded(auth, site.id, threadId, { expectedMessageId: result.messageId });
-    const fmt = detectOutputFormat(args.output);
-    if (fmt === 'json') return printJson(result);
-    runSuccess({
-      title: sendResultTitle('Draft', result.delivery),
+    printSendSuccess({
+      fmt: detectOutputFormat(args.output),
+      noun: 'Draft',
+      messageId: result.messageId,
+      delivery: result.delivery,
+      result,
       elapsedMs: Date.now() - start,
-      extra: result.delivery
-        ? `delivery ${result.delivery.uid} • message #${result.messageId}`
-        : `message #${result.messageId}`,
     });
   },
 
