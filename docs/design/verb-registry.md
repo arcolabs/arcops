@@ -2,7 +2,7 @@
 
 > Issue: KEH-122  
 > Scope: design only; no implementation code.  
-> Truth source for product surface: `~/notion-md/saas/arcops/arcops-saas-v1-spec.md` §7 / §8.1.
+> Truth source for product surface: [`arcolabs/arco/docs/context/arcops/arcops-saas-v1-spec.md`](https://github.com/arcolabs/arco/blob/main/docs/context/arcops/arcops-saas-v1-spec.md) §7 / §8.1.
 
 ## 1. Problem
 

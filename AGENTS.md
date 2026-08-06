@@ -6,9 +6,9 @@ cross-channel facts, lifecycle semantics, experiment memory, and bounded actions
 across acquisition, activation, revenue, retention, Search Console, Stripe, and
 the customer inbox. Published to npm as `@arcolab/arcops`.
 
-**Naming history**: previously `traffic-source-cli` (binary `ts`, backend `traffic-source/`) -> `quay` (binary `quay`, package `@tritonix/quay`) -> `arcops` (binary `arcops`, package `@arcolab/arcops`). The current checkouts are `~/projects/arco/arcops-cli/` and `~/projects/arco/arcops-server/`; git remotes point at `arcolabs/arcops` and `arcolabs/arcops-server`. The `ts_` prefix identifies legacy compatibility tokens only. Zeabur project / CF Access app names may still reference old slugs - that's a separate, costly rename and stays deferred.
+**Naming history**: previously `traffic-source-cli` (binary `ts`, backend `traffic-source/`) -> `quay` (binary `quay`, package `@tritonix/quay`) -> `arcops` (binary `arcops`, package `@arcolab/arcops`). The current repositories are `arcolabs/arcops` and `arcolabs/arcops-server`. The `ts_` prefix identifies legacy compatibility tokens only. Zeabur project / CF Access app names may still reference old slugs - that's a separate, costly rename and stays deferred.
 
-Global engineering discipline: `~/.claude/CLAUDE.md`. CLI-specific patterns: `~/.claude/knowledge/frameworks/cli-development.md` (read this before editing - output layering, catalog-as-data, fetch timeouts, lockfile gotchas, ANSI palette discipline).
+Machine-local harness policy supplies generic safety and execution guardrails. This `AGENTS.md` owns CLI engineering rules, including output layering, catalog-as-data, fetch timeouts, lockfile behavior, and ANSI discipline. Arcops product truth is owned by [`arcolabs/arco/docs/context/arcops/`](https://github.com/arcolabs/arco/tree/main/docs/context/arcops). Cross-session task state belongs in this repository's GitHub Issues, PRs, and CI—not in personal context or Buzz transcripts.
 
 ## Stack
 - TypeScript, target ES2022, module ESNext, strict mode
@@ -26,8 +26,8 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 ```
 
 ## Two-repo workflow
-- Server repo: `~/projects/arco/arcops-server/` (TanStack Start, Zeabur) = `arcolabs/arcops-server`. Endpoints, auth middleware, schema, and key verification live there. Production: `https://arcops.cc` (Tencent Tokyo; `tritonix.cn` is a legacy alias until external pointers migrate, `ops.arco.video` was unbound 2026-07-16).
-- CLI repo: this one (`~/projects/arco/arcops-cli/`) = `arcolabs/arcops`. Distributed via npm (`@arcolab/arcops`); `bun link` for local dev.
+- Server repo: `arcolabs/arcops-server` (TanStack Start, Zeabur). Endpoints, auth middleware, schema, and key verification live there. Production: `https://arcops.cc` (Tencent Tokyo; `tritonix.cn` is a legacy alias until external pointers migrate, `ops.arco.video` was unbound 2026-07-16).
+- CLI repo: this one, `arcolabs/arcops`. Distributed via npm (`@arcolab/arcops`); `bun link` for local dev.
 - Cross-repo work: split commits via `git -C <path>`. A server change is live only after its reviewed commit reaches `main` and the Zeabur deployment is verified; pushing a review branch does not deploy it.
 - New endpoint or scope change in server -> after deploy: re-test affected `arcops` command end-to-end against `https://arcops.cc`.
 
@@ -52,7 +52,7 @@ bun link             # symlinks dist/arcops.mjs to ~/.bun/bin/arcops for local u
 5. **Version / intercept detection**: non-JSON or redirected (CF Access) responses throw `kind: 'intercept'` with a "version mismatch / request intercepted" message. The CLI sends `x-arcops-cli-version` on every request; a server-sent version header would require a server-side change (out of bounds for S2) and is a follow-up.
 
 ## Output discipline (TTY-aware)
-**Iron rule: stdout = data, stderr = everything else.** Detailed reasoning in `~/.claude/knowledge/frameworks/cli-development.md`.
+**Iron rule: stdout = data, stderr = everything else.** The rules below are the repository-owned contract.
 - `process.stdout.isTTY` -> text; non-TTY (pipe / redirect) -> JSON. `--output text|json` flag overrides.
 - Spinners, progress, warnings, success ticks, command summaries -> `stderr` (so `arcops site ls | jq` still works).
 - `printJson(undefined)` outputs literal `"undefined"` - destructure carefully and let `apiCall` throw on empty/non-JSON responses (it does).
