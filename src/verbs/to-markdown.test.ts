@@ -29,6 +29,7 @@ describe('to-markdown verb reference', () => {
     expect(md).toContain('| Command | Scope | Kind | Summary |');
     expect(md).toContain('### Auth (local)');
     expect(md).toContain('### Inbox lifecycle');
+    expect(md).toContain('### Events & webhooks');
     expect(md).toContain('### Capability discovery (local)');
     expect(md).toContain('### PLG growth');
   });
