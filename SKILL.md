@@ -303,6 +303,24 @@ The table below is generated from `src/verbs/registry.ts` - the same source `arc
 | `arcops inbox draft send` | `send` | remote | Queue a draft as an outbound reply (send scope) |
 | `arcops inbox draft rm` | `write` | remote | Discard a draft |
 
+### Events & webhooks
+
+| Command | Scope | Kind | Summary |
+| --- | --- | --- | --- |
+| `arcops webhook ls` | `read` | remote | List webhook endpoints |
+| `arcops webhook create` | `write` | remote | Create a webhook endpoint (signing secret shown once) |
+| `arcops webhook update` | `write` | remote | Update a webhook endpoint (name/url/events/status/secret rotation) |
+| `arcops webhook rm` | `write` | remote | Delete a webhook endpoint |
+| `arcops webhook test` | `write` | remote | Fire a real ping event at an endpoint (exits non-zero on failure) |
+| `arcops webhook deliveries` | `read` | remote | Per-endpoint delivery log (cursor-paginated via --cursor) |
+| `arcops events ls` | `read` | remote | List outbound events (cursor-paginated via --cursor) |
+| `arcops events show` | `read` | remote | Show one event with its deliveries |
+| `arcops events replay` | `write` | remote | Re-arm a failed/dead delivery (runner picks it up next tick) |
+
+**`arcops webhook create`**: Creates a generic HTTPS webhook endpoint. The plaintext whsec_ signing secret is returned exactly once - save it immediately (lost = rotate via webhook:update --rotate-secret).
+**`arcops webhook update`**: PATCH an endpoint. --status active re-enables (also clears the circuit-breaker counter after auto_disabled). --rotate-secret mints a new whsec_ shown once in the response.
+**`arcops webhook test`**: Creates a ping event and delivers it synchronously through the real delivery state machine (signature included). Non-succeeded outcome exits non-zero with last_http_status/last_error.
+
 ### Templates (local)
 
 | Command | Scope | Kind | Summary |

@@ -28,6 +28,7 @@ const CATEGORY_ORDER = [
   'Customers & attribution',
   'Inbox lifecycle',
   'Inbox drafts',
+  'Events & webhooks',
   'Templates (local)',
   'Capability discovery (local)',
   'Audit',
@@ -48,6 +49,7 @@ export function categoryOf(v: VerbDef): string {
   if (id.startsWith('customer:') || id.startsWith('attribution:')) return 'Customers & attribution';
   if (id.startsWith('inbox:draft:')) return 'Inbox drafts';
   if (id.startsWith('inbox:')) return 'Inbox lifecycle';
+  if (id.startsWith('events:') || id.startsWith('webhook:')) return 'Events & webhooks';
   if (id.startsWith('template:')) return 'Templates (local)';
   if (id === 'verbs') return 'Capability discovery (local)';
   if (id.startsWith('audit:')) return 'Audit';
