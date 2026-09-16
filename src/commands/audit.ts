@@ -1,27 +1,35 @@
 // src/commands/audit.ts
 //
 // §8.3.2 ③ - `arcops audit ls <site>`: the product feature "what did my agent
-// do for this site". Reads the org/site-scoped send/write scope operation log
-// from GET /api/sites/:siteId/audit. stdout = data (JSON when piped, table in
-// TTY); human copy + scope badge go to stderr via printTable/info.
+// do for this site". Reads the org/site-scoped append-only ledger through
+// GET /api/audit/events (P5 step 3 of the audit unification); the legacy
+// GET /api/sites/:siteId/audit path still exists for older releases and is
+// deleted only once this one is the published default. stdout = data (JSON when
+// piped, table in TTY); human copy + scope badge go to stderr via
+// printTable/info.
 
 import { resolveAuth } from '../config';
 import { apiGet } from '../api';
 import { detectOutputFormat, info, printJson, printTable } from '../output';
 import { resolveSiteOrExit } from '../lib/site-resolve';
 
-export type AuditEntry = {
+// One row of the ledger (`audit_events`) as `/api/audit/events` returns it.
+// `occurredAt` is when the action happened, which for a backfilled row is the
+// legacy row's own timestamp; `createdAt` is when the row reached the ledger.
+// `actor` carries the attribution the ledger keeps in one column: `user:<id|email>`
+// for a person, `api_key:<id>` for a key, `server:<module>` for the product itself.
+export type AuditEvent = {
   id: number;
-  user_id: number | null;
-  user_email: string | null;
+  eventUid: string;
+  orgId: string;
+  siteId: number | null;
+  actor: string;
   action: string;
-  target_type: string | null;
-  target_id: string | null;
-  metadata: unknown;
-  api_key_id: string | null;
-  scope: string | null;
-  site_id: number | null;
-  created_at: string;
+  subjectType: string;
+  subjectId: string;
+  payloadJson: Record<string, unknown> | null;
+  occurredAt: string;
+  createdAt: string;
 };
 
 export async function ls(args: {
@@ -39,30 +47,29 @@ export async function ls(args: {
   if (Number.isFinite(limit)) {
     query.set('limit', String(limit));
   }
-  const qs = query.toString();
-  const { entries } = await apiGet<{ entries: AuditEntry[] }>(
-    `/api/sites/${site.id}/audit${qs ? `?${qs}` : ''}`,
+  query.set('site_id', String(site.id));
+  const { events } = await apiGet<{ events: AuditEvent[] }>(
+    `/api/audit/events?${query.toString()}`,
     { api: auth.api, token: auth.token },
   );
 
   const fmt = detectOutputFormat(args.output);
-  if (fmt === 'json') return printJson(entries);
+  if (fmt === 'json') return printJson(events);
 
-  if (entries.length === 0) {
+  if (events.length === 0) {
     info(`No audit entries for ${site.domain}. Send/write operations performed via API keys are recorded here.`);
     return;
   }
 
   printTable(
-    entries.map((e) => ({
+    events.map((e) => ({
       id: e.id,
-      created_at: typeof e.created_at === 'string' ? e.created_at.slice(0, 19).replace('T', ' ') : e.created_at,
+      created_at:
+        typeof e.occurredAt === 'string' ? e.occurredAt.slice(0, 19).replace('T', ' ') : e.occurredAt,
       action: e.action,
-      scope: e.scope ?? '',
-      api_key_id: e.api_key_id ?? '',
-      actor: e.user_email ?? '',
-      target: e.target_type ? `${e.target_type}:${e.target_id ?? ''}` : '',
+      actor: e.actor,
+      target: e.subjectType ? `${e.subjectType}:${e.subjectId ?? ''}` : '',
     })) as unknown as Record<string, unknown>[],
-    ['id', 'created_at', 'action', 'scope', 'api_key_id', 'actor', 'target'],
+    ['id', 'created_at', 'action', 'actor', 'target'],
   );
 }
