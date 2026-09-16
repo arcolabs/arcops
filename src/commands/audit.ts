@@ -42,16 +42,32 @@ export async function ls(args: {
   const auth = resolveAuth(args);
   const site = await resolveSiteOrExit(args.site ?? '', auth);
 
-  const query = new URLSearchParams();
-  const limit = args.limit != null ? Number(args.limit) : NaN;
-  if (Number.isFinite(limit)) {
-    query.set('limit', String(limit));
+  // The ledger endpoint pages at 200 rows and defaults to 100, while this verb
+  // has always shown up to 1000 in one call (the legacy path's clamp). Asking
+  // once would silently cut a long history in half, so the verb pages itself
+  // through `before_id` until it has what was asked for.
+  const LEDGER_PAGE = 200;
+  const LEDGER_MAX = 1000;
+  const requested = args.limit != null ? Number(args.limit) : NaN;
+  const target = Number.isFinite(requested)
+    ? Math.min(Math.max(Math.trunc(requested), 1), LEDGER_MAX)
+    : 200;
+
+  const events: AuditEvent[] = [];
+  let before: number | null = null;
+  while (events.length < target) {
+    const query = new URLSearchParams();
+    query.set('site_id', String(site.id));
+    query.set('limit', String(Math.min(LEDGER_PAGE, target - events.length)));
+    if (before != null) query.set('before_id', String(before));
+    const page = await apiGet<{ events: AuditEvent[]; next_cursor: number | null }>(
+      `/api/audit/events?${query.toString()}`,
+      { api: auth.api, token: auth.token },
+    );
+    events.push(...page.events);
+    if (page.next_cursor == null || page.events.length === 0) break;
+    before = page.next_cursor;
   }
-  query.set('site_id', String(site.id));
-  const { events } = await apiGet<{ events: AuditEvent[] }>(
-    `/api/audit/events?${query.toString()}`,
-    { api: auth.api, token: auth.token },
-  );
 
   const fmt = detectOutputFormat(args.output);
   if (fmt === 'json') return printJson(events);
