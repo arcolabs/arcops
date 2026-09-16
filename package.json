@@ -1,6 +1,6 @@
 {
   "name": "@arcolab/arcops",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "type": "module",
   "description": "Agent-native GTM control plane CLI for founder-led PLG products.",
   "bin": {
