@@ -33,7 +33,7 @@ const CATEGORY_ORDER = [
   'Audit',
   'Invite administration',
   'Organizations',
-  'PLG growth',
+  'Product identity',
 ] as const;
 
 export function categoryOf(v: VerbDef): string {
@@ -53,7 +53,7 @@ export function categoryOf(v: VerbDef): string {
   if (id.startsWith('audit:')) return 'Audit';
   if (id.startsWith('invite:')) return 'Invite administration';
   if (id.startsWith('org:')) return 'Organizations';
-  if (id.startsWith('growth:')) return 'PLG growth';
+  if (id.startsWith('growth:')) return 'Product identity';
   return 'Other';
 }
 

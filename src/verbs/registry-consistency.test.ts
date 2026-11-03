@@ -128,41 +128,17 @@ describe('verb registry consistency (design §6.3)', () => {
       'inbox:reply',
       'inbox:draft:send',
       'growth:identity:upsert',
-      'growth:lifecycle:set',
-      'growth:experiment:create',
-      'growth:experiment:update',
-      'growth:experiment:readback',
-      'growth:release:create',
-      'growth:signal:refresh',
-      'growth:signal:ack',
-      'growth:signal:resolve',
     ]);
     for (const v of VERBS) {
       expect(!!v.supportsIdempotencyKey, `verb '${v.id}'`).toBe(sendClass.has(v.id));
     }
   });
 
-  test('transformed growth bodies describe the actual HTTP payload', () => {
+  test('transformed identity body describe the actual HTTP payload', () => {
     const expected = new Map<string, { body: string[]; bodyAdapter: string }>([
       ['growth:identity:upsert', {
         body: ['user', 'account', 'visitor_id', 'session_id', 'stripe_customer_id'],
         bodyAdapter: 'growth.identity.upsert',
-      }],
-      ['growth:lifecycle:set', {
-        body: ['schemaVersion', 'scope', 'signup', 'activation', 'retention', 'atRisk', 'expansion', 'conversionWindowDays', 'acquisitionSignal'],
-        bodyAdapter: 'growth.lifecycle.set',
-      }],
-      ['growth:experiment:readback', {
-        body: ['measured_from', 'measured_to', 'decision', 'notes'],
-        bodyAdapter: 'growth.experiment.readback',
-      }],
-      ['growth:signal:ack', {
-        body: ['status'],
-        bodyAdapter: 'growth.signal.ack',
-      }],
-      ['growth:signal:resolve', {
-        body: ['status', 'resolution_note'],
-        bodyAdapter: 'growth.signal.resolve',
       }],
     ]);
     for (const [id, mapping] of expected) {
@@ -170,9 +146,6 @@ describe('verb registry consistency (design §6.3)', () => {
       expect(http?.body, `body for '${id}'`).toEqual(mapping.body);
       expect(http?.bodyAdapter, `adapter for '${id}'`).toBe(mapping.bodyAdapter);
     }
-    const outcomes = VERBS.find((verb) => verb.id === 'growth:outcomes')?.http;
-    expect(outcomes?.query).toEqual(['from', 'to']);
-    expect(outcomes?.queryAdapter).toBe('growth.outcomes');
   });
 
   // Dispatch mounts both catalogs with generated precedence (design §6.2): no

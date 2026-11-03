@@ -2,7 +2,7 @@
 
 `arcops` is the terminal interface to the Arcops agent-native GTM control plane
 for founder-led PLG products. It gives a founder's coding agent deterministic
-cross-channel facts, lifecycle semantics, experiment memory, and bounded actions
+cross-channel facts and bounded actions
 across acquisition, activation, revenue, retention, Search Console, Stripe, and
 the customer inbox. Published to npm as `@arcolab/arcops`.
 
