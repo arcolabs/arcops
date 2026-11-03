@@ -180,3 +180,33 @@ describe.skipIf(!NODE)('pipe guard: write verb survives a closed downstream pipe
     }
   });
 });
+
+// Issue #3: `process.exit()` right after a large stdout write discarded
+// whatever libuv had not yet flushed to the pipe, so a live consumer received
+// exactly one pipe buffer (64/128 KiB) of invalid JSON while the CLI exited 0.
+// A file redirect is synchronous and never showed it; only a pipe does.
+describe.skipIf(!NODE)('stdout flush: large output reaches a live pipe consumer intact (#3)', () => {
+  test('inbox ls | cat delivers the full JSON document', async () => {
+    const threads = Array.from({ length: 4000 }, (_, i) => ({
+      id: i + 1, subject: `thread subject number ${i} with some padding text`,
+      last_message_at: '2026-07-16T10:00:00Z', unread_for_ops: false,
+      assignee_email: null, status: 'open',
+    }));
+    const { base, stop } = await mockServer([
+      (req, url) => url.pathname === '/api/sites' && req.method === 'GET'
+        ? json({ sites: [{ id: 8, domain: 'sunor.cc' }] }) : undefined,
+      (req, url) => url.pathname === '/api/sites/8/inbox/threads' && req.method === 'GET'
+        ? json({ threads, counts: { open: 4000 }, nextCursor: null }) : undefined,
+    ]);
+    try {
+      const cmd = `{ '${NODE}' '${BUNDLE}' --api ${base} inbox ls sunor.cc --output json; echo "X:$?" >&2; } | cat`;
+      const r = await runPipeline(cmd);
+      expect(r.cliExit).toBe(0);
+      expect(r.stdout.length).toBeGreaterThan(256 * 1024); // well past any pipe buffer
+      const parsed = JSON.parse(r.stdout);
+      expect(Array.isArray(parsed) ? parsed.length : parsed.threads.length).toBe(4000);
+    } finally {
+      await stop();
+    }
+  });
+});
