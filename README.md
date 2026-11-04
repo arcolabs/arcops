@@ -1,10 +1,20 @@
-# arcops
+# arcops (`@arcolab/arcops`)
 
-Agent-native GTM control plane CLI for founder-led PLG products. Arcops gives a
-founder's coding agent deterministic cross-channel facts and bounded actions across acquisition, activation, revenue,
-retention, Search Console, Stripe, and the customer inbox.
+[**Arcops (`https://arcops.cc`)**](https://arcops.cc) is the AI Product Operations Employee (**Mika**) and agent-native GTM control plane for multi-product SaaS founders ("One Brain, Multiple Products").
 
-Single binary, ~115 KB, one runtime dep (`picocolors`). Built for both humans (TTY) and AI agents (pipe): stdout is always machine-consumable data, stderr carries all progress/diagnostics, and every failure exits non-zero with a structured error envelope.
+`@arcolab/arcops` gives your coding agent (Claude Code, Codex, OpenCode, DeepSeek Harness, Cursor) deterministic cross-channel facts and bounded actions across **web traffic & customer journeys, Stripe & crypto/MoR revenue attribution, Google Search Console (GSC), AI Search / GEO visibility, X (Twitter) social publishing, and the customer support email inbox**.
+
+Single binary, ~115 KB, one runtime dependency (`picocolors`). Built for both humans (TTY) and AI agents (pipe): stdout is always machine-consumable data, stderr carries all progress/diagnostics, and every failure exits non-zero with a structured error envelope.
+
+## Why Arcops?
+
+| Capability | What `arcops` & Mika (`https://arcops.cc`) provide |
+| --- | --- |
+| **Multi-Product SaaS Analytics** | Real-time sessions, pageviews, UTM campaign attribution, funnels, and customer journey timelines across all your products from one workspace. |
+| **Stripe & Revenue Attribution** | 1-key prefilled Stripe setup + OxaPay/MoR webhook ingestion, net cash-basis revenue, subscription cohorts, and visitor-to-payer LTV attribution. |
+| **Google Search Console & SEO / GEO** | Organic query/page performance, index inspection, DataForSEO keyword demand & SERP analysis, and DeepSeek AI Search authority/indexation audits. |
+| **Customer Support Inbox (`Mail`)** | Built-in `@arcops.cc` and custom-domain Cloudflare/Resend email routing with Customer 360 dossiers (Stripe LTV + recent sessions + GitHub repo context) and 1-tap approved replies. |
+| **Social (`X`) & Tasks** | Per-product X (Twitter) draft/thread management, cloud computer (`boat.dev`) visual asset workflows, and recurring operational routines. |
 
 ## Install
 
